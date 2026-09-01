@@ -1,0 +1,47 @@
+# ROS 2 / colcon outputs
+/build/
+/install/
+/log/
+**/build/
+**/install/
+**/log/
+
+# ROS runtime data
+.ros/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.bag
+*.mcap
+
+# Python caches and test outputs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Vite / Node outputs
+node_modules/
+src/my_first_bot/web/node_modules/
+src/my_first_bot/web/.vite/
+npm-debug.log*
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+*~
+
+# Local Codex workspace metadata
+/.agents/
+/.codex/
+
+# Raw captures and temporary exports
+*.webm
+*.mp4
+*.tmp
+*.bak
+

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Warehouse raw diagnostics</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; padding: 14px; background: #090d12; color: #d7e2eb; font: 13px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; }
+      #status { position: sticky; top: 0; padding: 7px 9px; background: #111a24; border-bottom: 1px solid #2b4255; color: #65e6ca; }
+      #status.error { color: #ff7180; }
+      pre { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    </style>
+    <script type="module" crossorigin src="/assets/debug-wluf-B0k.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/modulepreload-polyfill-B5Qt9EMX.js">
+  </head>
+  <body>
+    <div id="status">Connecting…</div>
+    <pre id="output">Waiting for /api/debug…</pre>
+  </body>
+</html>

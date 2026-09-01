@@ -1,0 +1,14 @@
+frame_id: map
+
+# Fixed UWB references surveyed in the same coordinate frame as the occupancy
+# map.  They are mounted high around the perimeter to provide overlapping
+# visibility through the warehouse.
+tags:
+  - {id: A01, x: -16.5, y: -22.0, z: 4.0, enabled: true, battery_pct: 100}
+  - {id: A02, x:  -3.0, y: -22.0, z: 4.0, enabled: true, battery_pct: 100}
+  - {id: A03, x:  10.0, y: -22.0, z: 4.0, enabled: true, battery_pct: 100}
+  - {id: A04, x: -16.5, y:   0.0, z: 4.0, enabled: true, battery_pct: 100}
+  - {id: A05, x:  10.0, y:   0.0, z: 4.0, enabled: true, battery_pct: 100}
+  - {id: A06, x: -16.5, y:  21.0, z: 4.0, enabled: true, battery_pct: 100}
+  - {id: A07, x:  -3.0, y:  21.0, z: 4.0, enabled: true, battery_pct: 100}
+  - {id: A08, x:  10.0, y:  21.0, z: 4.0, enabled: true, battery_pct: 100}

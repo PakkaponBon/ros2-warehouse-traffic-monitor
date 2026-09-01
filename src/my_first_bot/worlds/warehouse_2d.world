@@ -1,0 +1,578 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="warehouse_2d">
+    <gravity>0 0 -9.81</gravity>
+    <plugin name="gazebo_ros_state" filename="libgazebo_ros_state.so">
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+      <update_rate>10.0</update_rate>
+    </plugin>
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+    <model name="north_wall">
+      <static>true</static>
+      <pose>0 12 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>40 0.4 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>40 0.4 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="south_wall">
+      <static>true</static>
+      <pose>0 -12 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>40 0.4 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>40 0.4 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="east_wall">
+      <static>true</static>
+      <pose>20 0 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.4 24 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.4 24 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="west_wall">
+      <static>true</static>
+      <pose>-20 0 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.4 24 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.4 24 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="shelf_nw">
+      <static>true</static>
+      <pose>-10 5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.25 0.35 0.55 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="shelf_nc">
+      <static>true</static>
+      <pose>0 5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.25 0.35 0.55 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="shelf_ne">
+      <static>true</static>
+      <pose>10 5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.25 0.35 0.55 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="shelf_sw">
+      <static>true</static>
+      <pose>-10 -5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.25 0.35 0.55 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="shelf_sc">
+      <static>true</static>
+      <pose>0 -5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.25 0.35 0.55 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <model name="shelf_se">
+      <static>true</static>
+      <pose>10 -5 1 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>6 2 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.25 0.35 0.55 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <!-- These models are tracked through /gazebo/model_states and driven by
+         the per-model planar motion plugins below. -->
+    <model name="vehicle_1">
+      <pose>-17 -9 0.3 0 0 0</pose>
+      <link name="body">
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <iyy>1</iyy>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 0.45 0.05 1</ambient>
+          </material>
+        </visual>
+      </link>
+      <plugin name="planar_move_1" filename="libgazebo_ros_planar_move.so">
+        <ros>
+          <namespace>/traffic/vehicle_1</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <publish_rate>10</publish_rate>
+        <publish_odom>false</publish_odom>
+        <publish_odom_tf>false</publish_odom_tf>
+        <odometry_frame>odom_vehicle_1</odometry_frame>
+        <robot_base_frame>body</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="vehicle_2">
+      <pose>-4 -9 0.3 0 0 0</pose>
+      <link name="body">
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <iyy>1</iyy>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 0.45 0.05 1</ambient>
+          </material>
+        </visual>
+      </link>
+      <plugin name="planar_move_2" filename="libgazebo_ros_planar_move.so">
+        <ros>
+          <namespace>/traffic/vehicle_2</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <publish_rate>10</publish_rate>
+        <publish_odom>false</publish_odom>
+        <publish_odom_tf>false</publish_odom_tf>
+        <odometry_frame>odom_vehicle_2</odometry_frame>
+        <robot_base_frame>body</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="vehicle_3">
+      <pose>4 -9 0.3 0 0 0</pose>
+      <link name="body">
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <iyy>1</iyy>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>1 0.45 0.05 1</ambient>
+          </material>
+        </visual>
+      </link>
+      <plugin name="planar_move_3" filename="libgazebo_ros_planar_move.so">
+        <ros>
+          <namespace>/traffic/vehicle_3</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <publish_rate>10</publish_rate>
+        <publish_odom>false</publish_odom>
+        <publish_odom_tf>false</publish_odom_tf>
+        <odometry_frame>odom_vehicle_3</odometry_frame>
+        <robot_base_frame>body</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="vehicle_4">
+      <pose>17 -9 0.3 0 0 1.5708</pose>
+      <link name="body">
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <iyy>1</iyy>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.15 0.7 1 1</ambient>
+          </material>
+        </visual>
+      </link>
+      <plugin name="planar_move_4" filename="libgazebo_ros_planar_move.so">
+        <ros>
+          <namespace>/traffic/vehicle_4</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <publish_rate>10</publish_rate>
+        <publish_odom>false</publish_odom>
+        <publish_odom_tf>false</publish_odom_tf>
+        <odometry_frame>odom_vehicle_4</odometry_frame>
+        <robot_base_frame>body</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="vehicle_5">
+      <pose>17 0 0.3 0 0 1.5708</pose>
+      <link name="body">
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <iyy>1</iyy>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.15 0.7 1 1</ambient>
+          </material>
+        </visual>
+      </link>
+      <plugin name="planar_move_5" filename="libgazebo_ros_planar_move.so">
+        <ros>
+          <namespace>/traffic/vehicle_5</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <publish_rate>10</publish_rate>
+        <publish_odom>false</publish_odom>
+        <publish_odom_tf>false</publish_odom_tf>
+        <odometry_frame>odom_vehicle_5</odometry_frame>
+        <robot_base_frame>body</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="vehicle_6">
+      <pose>17 9 0.3 0 0 3.14159</pose>
+      <link name="body">
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <iyy>1</iyy>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.15 0.7 1 1</ambient>
+          </material>
+        </visual>
+      </link>
+      <plugin name="planar_move_6" filename="libgazebo_ros_planar_move.so">
+        <ros>
+          <namespace>/traffic/vehicle_6</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <publish_rate>10</publish_rate>
+        <publish_odom>false</publish_odom>
+        <publish_odom_tf>false</publish_odom_tf>
+        <odometry_frame>odom_vehicle_6</odometry_frame>
+        <robot_base_frame>body</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="vehicle_7">
+      <pose>4 9 0.3 0 0 3.14159</pose>
+      <link name="body">
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <iyy>1</iyy>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.15 0.7 1 1</ambient>
+          </material>
+        </visual>
+      </link>
+      <plugin name="planar_move_7" filename="libgazebo_ros_planar_move.so">
+        <ros>
+          <namespace>/traffic/vehicle_7</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <publish_rate>10</publish_rate>
+        <publish_odom>false</publish_odom>
+        <publish_odom_tf>false</publish_odom_tf>
+        <odometry_frame>odom_vehicle_7</odometry_frame>
+        <robot_base_frame>body</robot_base_frame>
+      </plugin>
+    </model>
+    <model name="vehicle_8">
+      <pose>-4 9 0.3 0 0 3.14159</pose>
+      <link name="body">
+        <inertial>
+          <mass>20</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <iyy>1</iyy>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.9 0.6 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.15 0.7 1 1</ambient>
+          </material>
+        </visual>
+      </link>
+      <plugin name="planar_move_8" filename="libgazebo_ros_planar_move.so">
+        <ros>
+          <namespace>/traffic/vehicle_8</namespace>
+        </ros>
+        <update_rate>50</update_rate>
+        <publish_rate>10</publish_rate>
+        <publish_odom>false</publish_odom>
+        <publish_odom_tf>false</publish_odom_tf>
+        <odometry_frame>odom_vehicle_8</odometry_frame>
+        <robot_base_frame>body</robot_base_frame>
+      </plugin>
+    </model>
+  </world>
+</sdf>

@@ -1,0 +1,29 @@
+amcl:
+  ros__parameters:
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    base_frame_id: base_footprint
+    global_frame_id: map
+    odom_frame_id: odom
+    scan_topic: scan
+    min_particles: 500
+    max_particles: 2000
+    max_beams: 90
+    laser_model_type: likelihood_field
+    laser_min_range: 0.15
+    laser_max_range: 20.0
+    laser_likelihood_max_dist: 2.0
+    robot_model_type: nav2_amcl::DifferentialMotionModel
+    set_initial_pose: true
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
+    tf_broadcast: true
+    transform_tolerance: 1.0
+    update_min_d: 0.10
+    update_min_a: 0.10

@@ -1,0 +1,51 @@
+frame_id: map
+minimum_tags: 3
+tags:
+  - id: anchor_sw
+    x: -28.5
+    y: -18.5
+    z: 3.6
+    enabled: true
+    battery_pct: 100.0
+  - id: anchor_s
+    x: 0.0
+    y: -18.5
+    z: 3.6
+    enabled: true
+    battery_pct: 100.0
+  - id: anchor_se
+    x: 28.5
+    y: -18.5
+    z: 3.6
+    enabled: true
+    battery_pct: 100.0
+  - id: anchor_w
+    x: -28.5
+    y: 0.0
+    z: 3.6
+    enabled: true
+    battery_pct: 100.0
+  - id: anchor_e
+    x: 28.5
+    y: 0.0
+    z: 3.6
+    enabled: true
+    battery_pct: 100.0
+  - id: anchor_nw
+    x: -28.5
+    y: 18.5
+    z: 3.6
+    enabled: true
+    battery_pct: 100.0
+  - id: anchor_n
+    x: 0.0
+    y: 18.5
+    z: 3.6
+    enabled: true
+    battery_pct: 100.0
+  - id: anchor_ne
+    x: 28.5
+    y: 18.5
+    z: 3.6
+    enabled: true
+    battery_pct: 100.0

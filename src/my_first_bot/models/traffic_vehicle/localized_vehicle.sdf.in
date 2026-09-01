@@ -1,0 +1,130 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="traffic_vehicle">
+    <link name="body">
+      <pose>0 0 0 0 0 0</pose>
+      <inertial>
+        <mass>20.0</mass>
+        <inertia>
+          <ixx>1.0</ixx>
+          <iyy>1.0</iyy>
+          <izz>1.0</izz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry><box><size>0.9 0.6 0.6</size></box></geometry>
+      </collision>
+      <visual name="body_visual">
+        <pose>0 0 -0.06 0 0 0</pose>
+        <geometry><box><size>0.9 0.6 0.38</size></box></geometry>
+        <material>
+          <ambient>0.15 0.70 1.0 1.0</ambient>
+          <diffuse>0.15 0.70 1.0 1.0</diffuse>
+        </material>
+      </visual>
+      <visual name="top_visual">
+        <pose>0 0 0.22 0 0 0</pose>
+        <geometry><box><size>0.46 0.42 0.18</size></box></geometry>
+        <material>
+          <ambient>0.05 0.25 0.38 1.0</ambient>
+          <diffuse>0.08 0.42 0.62 1.0</diffuse>
+        </material>
+      </visual>
+      <visual name="lidar_visual">
+        <pose>0 0 0.38 0 0 0</pose>
+        <geometry><cylinder><radius>0.09</radius><length>0.10</length></cylinder></geometry>
+        <material>
+          <ambient>0.08 0.10 0.12 1.0</ambient>
+          <diffuse>0.12 0.15 0.18 1.0</diffuse>
+        </material>
+      </visual>
+      <!-- Simulated UWB station.  The per-vehicle device ID is published by
+           uwb_simulator.py because Gazebo model templates are shared. -->
+      <visual name="uwb_station_visual">
+        <pose>0 0 0.49 0 0 0</pose>
+        <geometry><cylinder><radius>0.07</radius><length>0.035</length></cylinder></geometry>
+        <material>
+          <ambient>0.75 0.18 0.85 1.0</ambient>
+          <diffuse>0.95 0.28 0.95 1.0</diffuse>
+          <emissive>0.18 0.03 0.20 1.0</emissive>
+        </material>
+      </visual>
+      <visual name="front_marker">
+        <pose>0.46 0 0.03 0 1.5708 0</pose>
+        <geometry><cylinder><radius>0.09</radius><length>0.03</length></cylinder></geometry>
+        <material>
+          <ambient>1.0 0.75 0.10 1.0</ambient>
+          <diffuse>1.0 0.75 0.10 1.0</diffuse>
+        </material>
+      </visual>
+      <visual name="left_wheels">
+        <pose>0 -0.31 -0.12 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.15</radius><length>0.08</length></cylinder></geometry>
+        <material>
+          <ambient>0.03 0.04 0.05 1.0</ambient>
+          <diffuse>0.03 0.04 0.05 1.0</diffuse>
+        </material>
+      </visual>
+      <visual name="right_wheels">
+        <pose>0 0.31 -0.12 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.15</radius><length>0.08</length></cylinder></geometry>
+        <material>
+          <ambient>0.03 0.04 0.05 1.0</ambient>
+          <diffuse>0.03 0.04 0.05 1.0</diffuse>
+        </material>
+      </visual>
+
+      <sensor name="lidar" type="ray">
+        <pose>0 0 0.38 0 0 0</pose>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <update_rate>10</update_rate>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>360</samples>
+              <resolution>1</resolution>
+              <min_angle>-3.14159265</min_angle>
+              <max_angle>3.14159265</max_angle>
+            </horizontal>
+          </scan>
+          <range>
+            <min>0.15</min>
+            <max>20.0</max>
+            <resolution>0.01</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.01</stddev>
+          </noise>
+        </ray>
+        <plugin name="lidar_ros" filename="libgazebo_ros_ray_sensor.so">
+          <ros>
+            <namespace>__ROBOT_NAMESPACE__</namespace>
+            <remapping>~/out:=scan</remapping>
+          </ros>
+          <output_type>sensor_msgs/LaserScan</output_type>
+          <frame_name>__LASER_FRAME__</frame_name>
+        </plugin>
+      </sensor>
+    </link>
+
+    <plugin name="planar_move" filename="libgazebo_ros_planar_move.so">
+      <ros>
+        <namespace>__ROBOT_NAMESPACE__</namespace>
+        <remapping>cmd_vel:=cmd_vel</remapping>
+        <remapping>odom:=odom</remapping>
+      </ros>
+      <update_rate>50</update_rate>
+      <publish_rate>20</publish_rate>
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <odometry_frame>__ODOM_FRAME__</odometry_frame>
+      <robot_base_frame>__BASE_FRAME__</robot_base_frame>
+      <covariance_x>0.01</covariance_x>
+      <covariance_y>0.01</covariance_y>
+      <covariance_yaw>0.02</covariance_yaw>
+    </plugin>
+  </model>
+</sdf>
