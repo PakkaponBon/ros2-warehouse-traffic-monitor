@@ -37,6 +37,29 @@ def test_dynamic_vehicle_cells_can_block_a_route():
     assert grid.plan_cells((0, 0), (5, 0), blocked) == []
 
 
+def test_weighted_route_avoids_busy_cells_when_an_alternative_exists():
+    free = {(x, y) for x in range(7) for y in range(3)}
+    grid = planner(free, 7, 3)
+    busy = {(x, 1): 10.0 for x in range(2, 5)}
+
+    shortest = grid.plan_cells((0, 1), (6, 1))
+    suggested = grid.plan_weighted_cells((0, 1), (6, 1), busy)
+
+    assert all((x, 1) in shortest for x in range(2, 5))
+    assert not any(cell in busy for cell in suggested)
+
+
+def test_weighted_route_still_uses_busy_cell_when_it_is_the_only_path():
+    free = {(x, 0) for x in range(6)}
+    grid = planner(free, 6, 1)
+
+    route = grid.plan_weighted_cells((0, 0), (5, 0), {(3, 0): 100.0})
+
+    assert route[0] == (0, 0)
+    assert route[-1] == (5, 0)
+    assert (3, 0) in route
+
+
 def test_random_path_chooses_a_distant_reachable_goal():
     free = {(x, y) for x in range(12) for y in range(12)}
     path, goal = planner(free, 12, 12).random_path(

@@ -34,6 +34,9 @@ def generate_launch_description():
     traffic_seed = LaunchConfiguration("traffic_seed")
     traffic_profile = LaunchConfiguration("traffic_profile")
     traffic_pose_source = LaunchConfiguration("traffic_pose_source")
+    localization_drive_interlock = LaunchConfiguration(
+        "localization_drive_interlock"
+    )
     world_to_map_x = LaunchConfiguration("world_to_map_x")
     world_to_map_y = LaunchConfiguration("world_to_map_y")
     world_to_map_yaw = LaunchConfiguration("world_to_map_yaw")
@@ -86,6 +89,13 @@ def generate_launch_description():
             DeclareLaunchArgument("traffic_seed", default_value="42"),
             DeclareLaunchArgument("traffic_profile", default_value="warehouse_2d"),
             DeclareLaunchArgument("traffic_pose_source", default_value="gazebo"),
+            DeclareLaunchArgument(
+                "localization_drive_interlock",
+                default_value="false",
+                description=(
+                    "Require fresh AMCL recovery readiness before simulated motion"
+                ),
+            ),
             DeclareLaunchArgument("world_to_map_x", default_value="0.0"),
             DeclareLaunchArgument("world_to_map_y", default_value="0.0"),
             DeclareLaunchArgument("world_to_map_yaw", default_value="0.0"),
@@ -218,6 +228,7 @@ def generate_launch_description():
                         "seed": traffic_seed,
                         "profile": traffic_profile,
                         "pose_source": traffic_pose_source,
+                        "require_localization_ready": localization_drive_interlock,
                         "map_yaml": map_yaml,
                     }
                 ],

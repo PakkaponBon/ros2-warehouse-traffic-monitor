@@ -235,7 +235,9 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "use_uwb_startup",
                 default_value="true",
-                description="Initialize traffic AMCL x/y once from UWB",
+                description=(
+                    "Enable stopped-only UWB-assisted AMCL startup and recovery"
+                ),
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(str(full_sim)),
@@ -253,6 +255,7 @@ def generate_launch_description():
                     "traffic_speed": traffic_speed,
                     "traffic_profile": traffic_profile,
                     "traffic_pose_source": "amcl",
+                    "localization_drive_interlock": use_uwb_startup,
                     "uwb_range_noise": uwb_range_noise,
                     "uwb_dropout_rate": uwb_dropout_rate,
                     "uwb_maximum_range": uwb_maximum_range,
@@ -298,6 +301,7 @@ def generate_launch_description():
                         "include_main_vehicle": True,
                         "main_vehicle_id": "my_robot",
                         "minimum_tags": 3,
+                        "acceptance_distance": uwb_confirm_threshold,
                         "yaw_variance": 9.8696,
                     }
                 ],

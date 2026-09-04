@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Move demo warehouse vehicles along safe traffic routes."""
 
+import json
 import math
 import random
 import time
@@ -14,6 +15,18 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
 from grid_planner import OccupancyGridPlanner
+
+
+def readiness_allows_drive(entry, now, timeout):
+    """Return true only for a fresh explicit localization-ready message."""
+    if entry is None:
+        return False
+    payload, received_at = entry
+    return (
+        now - received_at <= timeout
+        and payload.get("state") == "ready"
+        and payload.get("drive_allowed") is True
+    )
 
 
 class TrafficSimulator(Node):
@@ -63,6 +76,9 @@ class TrafficSimulator(Node):
         self.declare_parameter("avoidance_distance", 1.5)
         self.declare_parameter("emergency_distance", 0.65)
         self.declare_parameter("blocked_replan_time", 3.5)
+        self.declare_parameter("pose_timeout", 3.0)
+        self.declare_parameter("require_localization_ready", False)
+        self.declare_parameter("readiness_timeout", 2.0)
         self.vehicle_count = int(self.get_parameter("vehicle_count").value)
         self.max_speed = float(self.get_parameter("max_speed").value)
         self.period = float(self.get_parameter("update_period").value)
@@ -91,6 +107,15 @@ class TrafficSimulator(Node):
         self.blocked_replan_time = float(
             self.get_parameter("blocked_replan_time").value
         )
+        self.pose_timeout = max(
+            0.2, float(self.get_parameter("pose_timeout").value)
+        )
+        self.require_localization_ready = bool(
+            self.get_parameter("require_localization_ready").value
+        )
+        self.readiness_timeout = max(
+            0.5, float(self.get_parameter("readiness_timeout").value)
+        )
         self.planner = None
         if self.random_navigation:
             map_yaml = str(self.get_parameter("map_yaml").value)
@@ -112,8 +137,11 @@ class TrafficSimulator(Node):
         self.state_publishers = {}
         self.pose_subscriptions = []
         self.scan_subscriptions = []
+        self.readiness_subscriptions = []
         self.scans = {}
         self.observed = {}
+        self.observed_at = {}
+        self.localization_readiness = {}
         self.states = {}
         now = time.monotonic()
         for index in range(1, self.vehicle_count + 1):
@@ -139,6 +167,17 @@ class TrafficSimulator(Node):
                         PoseWithCovarianceStamped,
                         f"/traffic/{name}/amcl_pose",
                         lambda message, vehicle=name: self.on_localized_pose(
+                            vehicle, message
+                        ),
+                        10,
+                    )
+                )
+            if self.require_localization_ready:
+                self.readiness_subscriptions.append(
+                    self.create_subscription(
+                        String,
+                        f"/traffic/{name}/initialization_status",
+                        lambda message, vehicle=name: self.on_localization_readiness(
                             vehicle, message
                         ),
                         10,
@@ -208,6 +247,15 @@ class TrafficSimulator(Node):
             1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
         )
         self.observed[name] = (pose.position.x, pose.position.y, yaw)
+        self.observed_at[name] = time.monotonic()
+
+    def on_localization_readiness(self, name, message):
+        """Cache the recovery coordinator's explicit drive permission."""
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            return
+        self.localization_readiness[name] = (payload, time.monotonic())
 
     def on_models(self, message):
         """Cache actual positions so a vehicle can yield to a nearby vehicle."""
@@ -222,6 +270,7 @@ class TrafficSimulator(Node):
                     * (orientation.y * orientation.y + orientation.z * orientation.z),
                 )
                 self.observed[name] = (pose.position.x, pose.position.y, yaw)
+                self.observed_at[name] = time.monotonic()
 
     @staticmethod
     def _vehicle_number(name):
@@ -297,7 +346,17 @@ class TrafficSimulator(Node):
     def step(self):
         now = time.monotonic()
         for name, state in self.states.items():
-            if self.pose_source == "amcl" and name not in self.observed:
+            if self.pose_source == "amcl" and (
+                name not in self.observed
+                or now - self.observed_at.get(name, 0.0) > self.pose_timeout
+            ):
+                self._publish_control(name, motion_state="localizing")
+                continue
+            if self.require_localization_ready and not readiness_allows_drive(
+                self.localization_readiness.get(name),
+                now,
+                self.readiness_timeout,
+            ):
                 self._publish_control(name, motion_state="localizing")
                 continue
             if name in self.observed:

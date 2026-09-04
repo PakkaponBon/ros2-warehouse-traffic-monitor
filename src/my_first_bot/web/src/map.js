@@ -132,36 +132,103 @@ export class WarehouseMap {
     return COLORS[value % COLORS.length];
   }
 
+  trackSegments(points) {
+    const segments = [];
+    let segment = [];
+    let previous = null;
+    for (const point of points) {
+      const current = {
+        x: Number(point[0]),
+        y: Number(point[1]),
+        time: Number(point[2]),
+      };
+      if (![current.x, current.y, current.time].every(Number.isFinite)) {
+        if (segment.length > 1) segments.push(segment);
+        segment = [];
+        previous = null;
+        continue;
+      }
+      if (previous) {
+        const elapsed = current.time - previous.time;
+        const distance = Math.hypot(current.x - previous.x, current.y - previous.y);
+        // Allow normal fast movement and history downsampling. Long telemetry
+        // gaps and impossible jumps still start a new segment so a lost AMCL
+        // fix or Gazebo teleport is never presented as real travel.
+        const plausibleDistance = Math.max(2.5, elapsed * 2.2 + 0.75);
+        if (elapsed <= 0 || elapsed > 12 || distance > plausibleDistance) {
+          if (segment.length > 1) segments.push(segment);
+          segment = [];
+        }
+      }
+      segment.push(current);
+      previous = current;
+    }
+    if (segment.length > 1) segments.push(segment);
+    return segments;
+  }
+
+  traceSegment(segment) {
+    this.ctx.beginPath();
+    segment.forEach((point, index) => {
+      const projected = this.project(point.x, point.y);
+      if (index === 0) this.ctx.moveTo(projected.x, projected.y);
+      else this.ctx.lineTo(projected.x, projected.y);
+    });
+  }
+
+  drawPathArrows(segment, color) {
+    let distanceSinceArrow = 0;
+    for (let index = 1; index < segment.length; index += 1) {
+      const first = this.project(segment[index - 1].x, segment[index - 1].y);
+      const second = this.project(segment[index].x, segment[index].y);
+      distanceSinceArrow += Math.hypot(second.x - first.x, second.y - first.y);
+      if (distanceSinceArrow < 90) continue;
+      distanceSinceArrow = 0;
+      const angle = Math.atan2(second.y - first.y, second.x - first.x);
+      this.ctx.save();
+      this.ctx.translate(second.x, second.y);
+      this.ctx.rotate(angle);
+      this.ctx.fillStyle = color;
+      this.ctx.strokeStyle = '#071521';
+      this.ctx.lineWidth = 2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(8, 0);
+      this.ctx.lineTo(-5, -5);
+      this.ctx.lineTo(-2, 0);
+      this.ctx.lineTo(-5, 5);
+      this.ctx.closePath();
+      this.ctx.fill();
+      this.ctx.stroke();
+      this.ctx.restore();
+    }
+  }
+
   drawPaths(data) {
     if (!this.focusedVehicle) return;
     (data.tracks || []).forEach((track) => {
       if (track.points.length < 2) return;
       if (this.focusedVehicle && track.vehicle_id !== this.focusedVehicle) return;
-      const selected = this.focusedVehicle === track.vehicle_id;
-      this.ctx.strokeStyle = this.trackColor(track.vehicle_id);
-      this.ctx.lineWidth = selected ? 4 : 2.5;
+      const color = this.trackColor(track.vehicle_id);
+      const segments = this.trackSegments(track.points);
+      this.ctx.save();
       this.ctx.lineCap = 'round';
       this.ctx.lineJoin = 'round';
-      this.ctx.globalAlpha = 0.8;
-      this.ctx.beginPath(); let previous = null;
-      track.points.forEach((point) => {
-        const x = Number(point[0]);
-        const y = Number(point[1]);
-        const observedAt = Number(point[2]);
-        const valid = Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(observedAt);
-        const jump = previous && Math.hypot(x - previous.x, y - previous.y);
-        const separated = !valid || (previous && (jump > 1.5 || observedAt - previous.time > 5));
-        if (!valid) {
-          previous = null;
-          return;
-        }
-        const projected = this.project(x, y);
-        if (!previous || separated) this.ctx.moveTo(projected.x, projected.y);
-        else this.ctx.lineTo(projected.x, projected.y);
-        previous = { x, y, time: observedAt };
-      });
-      this.ctx.stroke();
-      this.ctx.globalAlpha = 1;
+      for (const segment of segments) {
+        // Dark outline separates the selected path from dense heat overlays.
+        this.traceSegment(segment);
+        this.ctx.strokeStyle = '#071521cc';
+        this.ctx.lineWidth = 8;
+        this.ctx.stroke();
+        this.traceSegment(segment);
+        this.ctx.strokeStyle = color;
+        this.ctx.lineWidth = 4.5;
+        this.ctx.shadowColor = color;
+        this.ctx.shadowBlur = 5;
+        this.ctx.stroke();
+        this.ctx.shadowBlur = 0;
+        this.drawPathArrows(segment, color);
+      }
+      this.ctx.restore();
     });
   }
 

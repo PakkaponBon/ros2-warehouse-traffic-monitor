@@ -1,16 +1,23 @@
 import './styles.css';
-import { getBounds, getMap, getState } from './api.js';
+import {
+  getBounds,
+  getMap,
+  getRouteSuggestion,
+  getState,
+} from './api.js';
 import {
   renderAnalytics,
   renderHotspots,
   renderLocalization,
   renderMetrics,
+  renderRouteSuggestion,
   renderUwbValidation,
   renderVehicleSummary,
   setConnection,
   setMode,
 } from './components.js';
 import { WarehouseMap } from './map.js';
+import { RouteSuggestionMap } from './route-map.js';
 
 const app = document.querySelector('#app');
 
@@ -104,6 +111,7 @@ app.innerHTML = `
     </section>
 
     <div class="content-grid">
+      <div class="primary-column">
       <section class="panel map-panel">
         <div class="panel-head">
           <div>
@@ -176,6 +184,61 @@ app.innerHTML = `
         </div>
       </section>
 
+      <section class="panel route-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Route suggestions</h2>
+            <span class="sub">Compare the shortest path with a lower-traffic path for one forklift</span>
+          </div>
+          <span class="tag advisory">ADVISORY ONLY</span>
+        </div>
+
+        <div class="route-layout">
+          <form id="routeForm" class="route-controls">
+            <label class="field">
+              <span>Forklift</span>
+              <select id="routeVehicle"><option value="">Waiting for vehicles…</option></select>
+            </label>
+            <div class="route-coordinate-row">
+              <label class="field">
+                <span>Destination X (m)</span>
+                <input id="routeX" type="number" step="0.01" placeholder="Click map">
+              </label>
+              <label class="field">
+                <span>Destination Y (m)</span>
+                <input id="routeY" type="number" step="0.01" placeholder="Click map">
+              </label>
+            </div>
+            <label class="field">
+              <span>Nominal speed</span>
+              <select id="routeSpeed">
+                <option value="0.6">0.6 m/s</option>
+                <option value="0.8" selected>0.8 m/s</option>
+                <option value="1.2">1.2 m/s</option>
+              </select>
+            </label>
+            <button id="suggestRouteButton" type="submit">Suggest lower-risk route</button>
+            <p id="routeStatus" class="route-status">Select a forklift, then click its destination on the mini-map.</p>
+            <p class="route-safety">This tool never publishes <code>cmd_vel</code> or a Nav2 goal.</p>
+          </form>
+
+          <div class="route-map-wrap">
+            <canvas id="routeMap" width="1000" height="560"></canvas>
+            <div id="routeTooltip" class="tooltip"></div>
+            <div class="route-map-legend">
+              <span><i class="route-line baseline"></i>shortest</span>
+              <span><i class="route-line suggested"></i>suggested</span>
+              <span><i class="route-risk-dot"></i>traffic risk</span>
+            </div>
+          </div>
+
+          <div id="routeResult" class="route-result">
+            <div class="empty">Choose a forklift and click a destination on the route map.</div>
+          </div>
+        </div>
+      </section>
+      </div>
+
       <aside class="side-column">
         <section class="panel">
           <div class="panel-head">
@@ -233,6 +296,7 @@ app.innerHTML = `
 
 const $ = (selector) => document.querySelector(selector);
 const map = new WarehouseMap($('#map'));
+const routeMap = new RouteSuggestionMap($('#routeMap'), $('#routeTooltip'));
 
 const state = {
   data: null,
@@ -247,6 +311,8 @@ const state = {
   debounce: null,
   selectedHotspot: null,
   selectedVehicle: null,
+  route: null,
+  routeLoading: false,
 };
 
 const emptyData = {
@@ -261,6 +327,7 @@ const emptyData = {
   analytics: {},
   localization: { summary: { samples: 0 }, vehicles: [] },
   uwb_validation: { live: true, summary: {}, vehicles: [] },
+  localization_recovery: { live: true, summary: {}, vehicles: [] },
 };
 
 function localInput(date) {
@@ -313,7 +380,11 @@ function render(data) {
     data.localization?.vehicles || [],
   );
   renderLocalization($('#localization'), data.localization);
-  renderUwbValidation($('#uwbValidation'), data.uwb_validation);
+  renderUwbValidation(
+    $('#uwbValidation'),
+    data.uwb_validation,
+    data.localization_recovery,
+  );
   if (state.selectedVehicle) {
     const selected = [...document.querySelectorAll('#summaryRows [data-vehicle]')].find((card) => (
       card.dataset.vehicle === state.selectedVehicle
@@ -322,6 +393,7 @@ function render(data) {
   }
   renderAnalytics($('#analytics'), data.analytics);
   renderHotspots($('#hotspots'), data);
+  updateRouteVehicles(data.latest);
   if (state.selectedHotspot) {
     const selected = [...document.querySelectorAll('#hotspots [data-hotspot]')].find((row) => (
       Math.abs(Number(row.dataset.x) - state.selectedHotspot.x) < 0.001
@@ -336,6 +408,20 @@ function render(data) {
     : 'Waiting for ROS traffic history';
 
   redraw();
+}
+
+function updateRouteVehicles(vehicles) {
+  const select = $('#routeVehicle');
+  const previous = select.value;
+  select.replaceChildren(...(
+    vehicles.length
+      ? vehicles.map((vehicle) => new Option(vehicle.vehicle_id, vehicle.vehicle_id))
+      : [new Option('No vehicles in this time range', '')]
+  ));
+  const preferred = state.selectedVehicle || previous;
+  if (vehicles.some((vehicle) => vehicle.vehicle_id === preferred)) {
+    select.value = preferred;
+  }
 }
 
 async function load(query) {
@@ -501,6 +587,9 @@ function selectVehicle(card) {
   document.querySelectorAll('#hotspots [data-hotspot]').forEach((item) => item.classList.remove('selected'));
   $('#pathLayer').checked = true;
   map.focusVehicle(state.selectedVehicle);
+  if ([...$('#routeVehicle').options].some((option) => option.value === state.selectedVehicle)) {
+    $('#routeVehicle').value = state.selectedVehicle;
+  }
 
   const vehicle = state.data?.latest?.find((item) => item.vehicle_id === state.selectedVehicle);
   $('#mapFocus').textContent = vehicle
@@ -626,14 +715,78 @@ $('#timeline').addEventListener('input', (event) => {
   state.debounce = setTimeout(() => loadFrame(state.cursor), 120);
 });
 
+function clearRouteSuggestion() {
+  state.route = null;
+  routeMap.setRoute(null);
+  renderRouteSuggestion($('#routeResult'), null);
+}
+
+routeMap.onDestination((point) => {
+  $('#routeX').value = point.x.toFixed(2);
+  $('#routeY').value = point.y.toFixed(2);
+  $('#routeStatus').className = 'route-status';
+  $('#routeStatus').textContent = `Destination selected at x ${point.x.toFixed(2)}, y ${point.y.toFixed(2)}. Generate the suggestion when ready.`;
+});
+
+$('#routeVehicle').addEventListener('change', clearRouteSuggestion);
+
+$('#routeForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (state.routeLoading) return;
+
+  const vehicleId = $('#routeVehicle').value;
+  const x = Number($('#routeX').value);
+  const y = Number($('#routeY').value);
+  const status = $('#routeStatus');
+  if (!vehicleId || !Number.isFinite(x) || !Number.isFinite(y)) {
+    status.className = 'route-status error';
+    status.textContent = 'Choose a forklift and set both destination coordinates.';
+    return;
+  }
+  if (!state.data?.samples) {
+    status.className = 'route-status error';
+    status.textContent = 'No recorded traffic is available in this dashboard time range.';
+    return;
+  }
+
+  state.routeLoading = true;
+  $('#suggestRouteButton').disabled = true;
+  status.className = 'route-status loading';
+  status.textContent = 'Calculating collision-clear alternatives…';
+  try {
+    state.route = await getRouteSuggestion({
+      vehicle_id: vehicleId,
+      destination: { x, y },
+      nominal_speed_mps: Number($('#routeSpeed').value),
+      start: state.data.start,
+      end: state.data.end,
+    });
+    routeMap.setRoute(state.route);
+    renderRouteSuggestion($('#routeResult'), state.route);
+    status.className = 'route-status success';
+    status.textContent = `${vehicleId}: route ready. Green is the suggested path; dashed gray is the shortest path.`;
+  } catch (error) {
+    clearRouteSuggestion();
+    status.className = 'route-status error';
+    status.textContent = error.message;
+  } finally {
+    state.routeLoading = false;
+    $('#suggestRouteButton').disabled = false;
+  }
+});
+
 async function boot() {
   render(emptyData);
 
   try {
-    await map.load(await getMap());
+    const mapInfo = await getMap();
+    await Promise.all([map.load(mapInfo), routeMap.load(mapInfo)]);
     redraw();
   } catch {
-    await map.load(map.info, '/fallback-map.png');
+    await Promise.all([
+      map.load(map.info, '/fallback-map.png'),
+      routeMap.load(routeMap.info, '/fallback-map.png'),
+    ]);
     map.draw(emptyData, options());
     setConnection(false, 'Map preview · ROS monitor offline');
   }

@@ -87,7 +87,7 @@ export function renderLocalization(root, localization) {
       </div>`).join('')}</div>`;
 }
 
-export function renderUwbValidation(root, validation) {
+export function renderUwbValidation(root, validation, recovery = {}) {
   const vehicles = validation?.vehicles || [];
   const summary = validation?.summary || {};
   if (!vehicles.length) {
@@ -110,7 +110,19 @@ export function renderUwbValidation(root, validation) {
   const asOf = validation.as_of
     ? new Date(validation.as_of).toLocaleString()
     : null;
+  const recoveryVehicles = recovery?.vehicles || [];
+  const recoveryByVehicle = new Map(
+    recoveryVehicles.map((vehicle) => [vehicle.vehicle_id, vehicle]),
+  );
+  const recoverySummary = recovery?.summary || {};
+  const interlock = recoveryVehicles.length
+    ? `<div class="recovery-summary ${recoverySummary.interlocked ? 'active' : ''}">
+        <b>Motion interlock</b>
+        <span>${recoverySummary.ready || 0} ready · ${recoverySummary.interlocked || 0} stopped/recovering</span>
+      </div>`
+    : '';
   root.innerHTML = `
+    ${interlock}
     <div class="uwb-overview">
       <div><strong>${summary.confirmed || 0}</strong><small>Confirmed</small></div>
       <div><strong>${summary.caution || 0}</strong><small>Caution</small></div>
@@ -127,8 +139,12 @@ export function renderUwbValidation(root, validation) {
       const pending = vehicle.raw_state && vehicle.raw_state !== vehicle.state
         ? ` · checking ${vehicle.raw_state.replaceAll('_', ' ')}`
         : '';
+      const recoveryState = recoveryByVehicle.get(vehicle.vehicle_id);
+      const recoveryText = recoveryState
+        ? ` · interlock ${recoveryState.state.replaceAll('_', ' ')}`
+        : '';
       return `<div class="uwb-row">
-        <span><b>${escapeHtml(vehicle.vehicle_id)}</b><small>${vehicle.visible_tag_count || 0} tags visible · ${escapeHtml(error)}${escapeHtml(pending)}</small></span>
+        <span><b>${escapeHtml(vehicle.vehicle_id)}</b><small>${vehicle.visible_tag_count || 0} tags visible · ${escapeHtml(error)}${escapeHtml(pending)}${escapeHtml(recoveryText)}</small></span>
         <strong class="uwb-state ${className}">${label}</strong>
       </div>`;
     }).join('')}</div>
@@ -165,6 +181,30 @@ export function renderHotspots(root, data) {
     <span><b style="color:${value.color}">${value.type}</b><small>x ${value.x.toFixed(1)} · y ${value.y.toFixed(1)}</small></span>
     <span class="hotspot-count"><strong>${value.events}×</strong><small>View map</small></span>
   </button>`).join('') : '<div class="empty">No stuck or congestion events.</div>';
+}
+
+export function renderRouteSuggestion(root, route) {
+  if (!route) {
+    root.innerHTML = '<div class="empty">Choose a forklift and click a destination on the route map.</div>';
+    return;
+  }
+  const duration = (seconds) => seconds >= 60
+    ? `${(seconds / 60).toFixed(1)} min`
+    : `${seconds.toFixed(0)} sec`;
+  const addedDistance = route.suggested.distance_m - route.baseline.distance_m;
+  const snapped = route.destination.snapped
+    ? '<p class="route-warning">Destination was moved to the nearest collision-clear map cell.</p>'
+    : '';
+  root.innerHTML = `
+    <div class="route-result-grid">
+      <div><small>Suggested distance</small><strong>${route.suggested.distance_m.toFixed(1)} m</strong><span>${addedDistance > 0.05 ? `+${addedDistance.toFixed(1)} m vs shortest` : 'same as shortest'}</span></div>
+      <div><small>Estimated time</small><strong>${duration(route.suggested.eta_s)}</strong><span>at selected nominal speed</span></div>
+      <div><small>Traffic risk</small><strong>${route.suggested.risk_score.toFixed(0)} / 100</strong><span>${route.risk_reduction.toFixed(1)} points lower</span></div>
+      <div><small>Hotspots avoided</small><strong>${route.hotspots_avoided}</strong><span>from this history window</span></div>
+    </div>
+    <p class="route-explanation">${escapeHtml(route.explanation)}</p>
+    ${snapped}
+    <p class="route-meta">Generated ${new Date(route.generated_at).toLocaleString()} using traffic from ${new Date(route.traffic_window.start).toLocaleString()} to ${new Date(route.traffic_window.end).toLocaleString()}.</p>`;
 }
 
 export function setConnection(connected, message) {

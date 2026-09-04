@@ -20,6 +20,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 import yaml
 
+from grid_planner import OccupancyGridPlanner
 from traffic_common import (
     iso_time,
     motion_state_is_problem,
@@ -132,6 +133,23 @@ class MonitorHandler(BaseHTTPRequestHandler):
             except OSError:
                 self._send(404, "text/plain", b"not found")
 
+    def do_POST(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path != "/api/routes/suggest":
+            self._send(404, "application/json", b'{"error":"not found"}')
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 65536:
+                raise ValueError("request body must be between 1 byte and 64 KiB")
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            result = self.monitor.suggest_route(payload)
+            self._send(200, "application/json", json.dumps(result).encode())
+        except (json.JSONDecodeError, TypeError, ValueError) as error:
+            self._send(400, "application/json", json.dumps({"error": str(error)}).encode())
+        except Exception as error:
+            self._send(500, "application/json", json.dumps({"error": str(error)}).encode())
+
     def _send(self, status, content_type, body):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
@@ -162,8 +180,11 @@ class WebMonitor(Node):
         self.declare_parameter("uwb_tag_config", "")
         self.declare_parameter("traffic_vehicle_count", 8)
         self.declare_parameter("web_root", "")
+        self.declare_parameter("route_planning_resolution", 0.30)
+        self.declare_parameter("route_robot_radius", 0.55)
         self.map_info, self._map_content_type, self._map_bytes = self._load_map_asset()
         self.map_info["uwb_tags"] = self._load_uwb_tags()
+        self.route_planner = self._load_route_planner()
         configured_root = str(self.get_parameter("web_root").value or "").strip()
         self.web_root = Path(configured_root).expanduser() if configured_root else Path(__file__).resolve().parent.parent / "web" / "dist"
         self.connection = open_database(
@@ -213,6 +234,26 @@ class WebMonitor(Node):
         self.get_logger().info(
             f"Web traffic monitor available at http://localhost:{self.get_parameter('web_port').value}"
         )
+
+    def _load_route_planner(self):
+        """Load the same occupancy map used by AMCL for advisory routes."""
+        map_yaml = str(self.get_parameter("map_yaml").value or "").strip()
+        if not map_yaml:
+            self.get_logger().warning(
+                "Route suggestions disabled because map_yaml is not configured"
+            )
+            return None
+        try:
+            return OccupancyGridPlanner.from_yaml(
+                map_yaml,
+                planning_resolution=float(
+                    self.get_parameter("route_planning_resolution").value
+                ),
+                robot_radius=float(self.get_parameter("route_robot_radius").value),
+            )
+        except Exception as error:
+            self.get_logger().warning(f"Route suggestions disabled: {error}")
+            return None
 
     @staticmethod
     def _image_dimensions(path):
@@ -401,7 +442,21 @@ class WebMonitor(Node):
                 if now - payload.get("received_at", 0.0) <= 5.0
             ]
         vehicles.sort(key=lambda value: value.get("vehicle_id", ""))
-        return {"live": True, "vehicles": vehicles}
+        return {
+            "live": True,
+            "summary": {
+                "total": len(vehicles),
+                "ready": sum(
+                    1 for vehicle in vehicles
+                    if vehicle.get("drive_allowed") is True
+                ),
+                "interlocked": sum(
+                    1 for vehicle in vehicles
+                    if vehicle.get("drive_allowed") is not True
+                ),
+            },
+            "vehicles": vehicles,
+        }
 
     def map_asset(self):
         return self._map_content_type, self._map_bytes
@@ -538,6 +593,246 @@ class WebMonitor(Node):
         worst["reason"] = f"{worst['stuck_events']} stuck event(s)" if worst["stuck_events"] else ("most slow-driving time" if worst["slow_seconds"] else "lowest average speed")
         return {"vehicle_stats": vehicle_stats, "worst_path": worst}
 
+    @staticmethod
+    def _route_distance(points):
+        """Return the length in metres of a world-coordinate polyline."""
+        return sum(
+            math.hypot(second[0] - first[0], second[1] - first[1])
+            for first, second in zip(points, points[1:])
+        )
+
+    @staticmethod
+    def _add_route_penalty(penalties, center, value, radius=0):
+        """Spread a traffic cost around a planner cell with linear falloff."""
+        for offset_x in range(-radius, radius + 1):
+            for offset_y in range(-radius, radius + 1):
+                distance = math.hypot(offset_x, offset_y)
+                if distance > radius:
+                    continue
+                cell = (center[0] + offset_x, center[1] + offset_y)
+                falloff = 1.0 if radius == 0 else max(0.2, 1.0 - distance / (radius + 1.0))
+                penalties[cell] = penalties.get(cell, 0.0) + value * falloff
+
+    def _route_penalties(self, history, selected_vehicle):
+        """Convert dashboard history into traversable A* traffic costs."""
+        planner = self.route_planner
+        density = history.get("density", [])
+        max_count = max((item["count"] for item in density), default=1)
+        max_vehicles = max((item["vehicles"] for item in density), default=1)
+        max_slow = max((item["slow_samples"] for item in density), default=1)
+        penalties = {}
+
+        for item in density:
+            occupancy = item["count"] / max_count
+            vehicle_mix = item["vehicles"] / max_vehicles
+            slow = item["slow_samples"] / max_slow
+            value = 1.2 * occupancy + 0.8 * vehicle_mix + 4.0 * slow
+            self._add_route_penalty(
+                penalties,
+                planner.world_to_cell(item["x"], item["y"]),
+                value,
+                radius=1,
+            )
+
+        event_radius = max(1, math.ceil(1.0 / planner.resolution))
+        for item in history.get("stuck", []):
+            value = 5.0 + min(5.0, math.log1p(item["events"]) * 2.0)
+            self._add_route_penalty(
+                penalties,
+                planner.world_to_cell(item["x"], item["y"]),
+                value,
+                event_radius,
+            )
+        for item in history.get("congestion", []):
+            value = 6.0 + min(6.0, float(item.get("max_vehicles", 1)))
+            self._add_route_penalty(
+                penalties,
+                planner.world_to_cell(item["x"], item["y"]),
+                value,
+                event_radius,
+            )
+
+        # Other forklifts are temporary risks, not permanent obstacles. This
+        # lets the suggestion use a narrow aisle if it is the only valid path.
+        vehicle_radius = max(1, math.ceil(1.2 / planner.resolution))
+        for vehicle in history.get("latest", []):
+            if vehicle["vehicle_id"] == selected_vehicle:
+                continue
+            self._add_route_penalty(
+                penalties,
+                planner.world_to_cell(vehicle["x"], vehicle["y"]),
+                8.0,
+                vehicle_radius,
+            )
+        return {
+            cell: value
+            for cell, value in penalties.items()
+            if cell in planner.free
+        }
+
+    @staticmethod
+    def _route_exposure(cells, penalties):
+        if not cells:
+            return 0.0
+        return sum(penalties.get(cell, 0.0) for cell in cells) / len(cells)
+
+    def suggest_route(self, payload):
+        """Compare the shortest route with a history-aware advisory route."""
+        if not isinstance(payload, dict):
+            raise ValueError("request body must be a JSON object")
+        if self.route_planner is None:
+            raise ValueError("route planner is unavailable; configure map_yaml")
+
+        vehicle_id = str(payload.get("vehicle_id", "")).strip()
+        destination = payload.get("destination")
+        if not vehicle_id:
+            raise ValueError("vehicle_id is required")
+        if not isinstance(destination, dict):
+            raise ValueError("destination with numeric x and y is required")
+        try:
+            requested_goal = (float(destination["x"]), float(destination["y"]))
+            nominal_speed = float(payload.get("nominal_speed_mps", 0.8))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("destination x/y and nominal_speed_mps must be numeric") from error
+        if not all(math.isfinite(value) for value in requested_goal):
+            raise ValueError("destination coordinates must be finite")
+        if not 0.1 <= nominal_speed <= 5.0:
+            raise ValueError("nominal_speed_mps must be between 0.1 and 5.0")
+
+        now = time.time()
+        end = parse_time(str(payload.get("end", "")), now)
+        start = parse_time(str(payload.get("start", "")), end - 300.0)
+        if start >= end:
+            raise ValueError("start must be earlier than end")
+        history = self.query({"start": [str(start)], "end": [str(end)]})
+        vehicle = next(
+            (item for item in history["latest"] if item["vehicle_id"] == vehicle_id),
+            None,
+        )
+        if vehicle is None:
+            track = next(
+                (item for item in history["tracks"] if item["vehicle_id"] == vehicle_id),
+                None,
+            )
+            if track and track["points"]:
+                point = track["points"][-1]
+                vehicle = {"vehicle_id": vehicle_id, "x": point[0], "y": point[1]}
+        if vehicle is None:
+            raise ValueError(f"no position for {vehicle_id} in the selected time range")
+
+        planner = self.route_planner
+        start_cell = planner.nearest_free(vehicle["x"], vehicle["y"])
+        goal_cell = planner.nearest_free(*requested_goal)
+        if start_cell is None:
+            raise ValueError("vehicle position is outside the traversable map")
+        if goal_cell is None:
+            raise ValueError("destination is outside the traversable map")
+        if planner.component_for.get(start_cell) != planner.component_for.get(goal_cell):
+            raise ValueError("destination is not reachable from this vehicle")
+
+        penalties = self._route_penalties(history, vehicle_id)
+        baseline_cells = planner.plan_cells(start_cell, goal_cell)
+        suggested_cells = planner.plan_weighted_cells(
+            start_cell, goal_cell, penalties
+        )
+        if not baseline_cells or not suggested_cells:
+            raise ValueError("no collision-clear route was found")
+
+        baseline_points = [planner.cell_to_world(cell) for cell in baseline_cells]
+        suggested_points = [planner.cell_to_world(cell) for cell in suggested_cells]
+        baseline_distance = self._route_distance(baseline_points)
+        suggested_distance = self._route_distance(suggested_points)
+        baseline_exposure = self._route_exposure(baseline_cells, penalties)
+        suggested_exposure = self._route_exposure(suggested_cells, penalties)
+
+        def route_summary(points, distance, exposure):
+            risk_score = round(100.0 * (1.0 - math.exp(-exposure / 3.0)), 1)
+            delay_factor = 1.0 + min(0.75, exposure * 0.12)
+            return {
+                "points": [[round(x, 3), round(y, 3)] for x, y in points],
+                "distance_m": round(distance, 2),
+                "eta_s": round(distance / nominal_speed * delay_factor, 1),
+                "risk_score": risk_score,
+                "traffic_exposure": round(exposure, 3),
+            }
+
+        baseline = route_summary(
+            baseline_points, baseline_distance, baseline_exposure
+        )
+        suggested = route_summary(
+            suggested_points, suggested_distance, suggested_exposure
+        )
+        hotspots = [*history.get("stuck", []), *history.get("congestion", [])]
+
+        def route_near(point_list, hotspot):
+            return any(
+                math.hypot(point[0] - hotspot["x"], point[1] - hotspot["y"])
+                <= 1.5
+                for point in point_list
+            )
+
+        avoided = sum(
+            1
+            for hotspot in hotspots
+            if route_near(baseline_points, hotspot)
+            and not route_near(suggested_points, hotspot)
+        )
+        risk_reduction = max(
+            0.0, baseline["risk_score"] - suggested["risk_score"]
+        )
+        if risk_reduction >= 1.0 or avoided:
+            explanation = (
+                f"Lower-risk route avoids {avoided} recorded hotspot(s) and "
+                f"reduces the traffic-risk score by {risk_reduction:.1f} points."
+            )
+        else:
+            explanation = (
+                "The shortest collision-clear route is also the best route for "
+                "the selected traffic window."
+            )
+
+        risk_cells = sorted(
+            penalties.items(), key=lambda item: item[1], reverse=True
+        )[:600]
+        maximum_penalty = max((value for _cell, value in risk_cells), default=1.0)
+        used_goal = planner.cell_to_world(goal_cell)
+        return {
+            "advisory_only": True,
+            "vehicle_id": vehicle_id,
+            "generated_at": iso_time(time.time()),
+            "traffic_window": {"start": history["start"], "end": history["end"]},
+            "map": {
+                "image": self.map_info.get("image"),
+                "width": self.map_info["width"],
+                "height": self.map_info["height"],
+                "resolution": self.map_info["resolution"],
+            },
+            "start": {"x": vehicle["x"], "y": vehicle["y"]},
+            "destination": {
+                "requested_x": requested_goal[0],
+                "requested_y": requested_goal[1],
+                "x": used_goal[0],
+                "y": used_goal[1],
+                "snapped": math.hypot(
+                    used_goal[0] - requested_goal[0],
+                    used_goal[1] - requested_goal[1],
+                ) > planner.resolution,
+            },
+            "baseline": baseline,
+            "suggested": suggested,
+            "risk_reduction": round(risk_reduction, 1),
+            "hotspots_avoided": avoided,
+            "explanation": explanation,
+            "risk_cells": [
+                {
+                    "x": round(planner.cell_to_world(cell)[0], 3),
+                    "y": round(planner.cell_to_world(cell)[1], 3),
+                    "risk": round(value / maximum_penalty, 3),
+                }
+                for cell, value in risk_cells
+            ],
+        }
+
     def query(self, query):
         now = time.time()
         end = parse_time(query.get("end", [""])[0], now)
@@ -663,6 +958,11 @@ class WebMonitor(Node):
             uwb_validation = self._validation_snapshot()
         else:
             uwb_validation = self._historical_validation([])
+        localization_recovery = (
+            self._initialization_snapshot()
+            if end >= now - float(self.get_parameter("latest_max_age").value)
+            else {"live": False, "summary": {}, "vehicles": []}
+        )
         return {
             "start": iso_time(start),
             "end": iso_time(end),
@@ -723,6 +1023,7 @@ class WebMonitor(Node):
                 ],
             },
             "uwb_validation": uwb_validation,
+            "localization_recovery": localization_recovery,
         }
 
     def bounds(self):

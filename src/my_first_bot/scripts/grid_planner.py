@@ -216,6 +216,17 @@ class OccupancyGridPlanner:
         request. The static ``self.free`` map is never changed. An empty list
         means that either endpoint is invalid or no route exists.
         """
+        return self.plan_weighted_cells(start, goal, {}, temporary)
+
+    def plan_weighted_cells(self, start, goal, penalties, temporary=()):
+        """
+        Run A* while preferring cells with lower traffic penalties.
+
+        ``penalties`` maps grid cells to non-negative extra traversal costs.
+        A penalty does not make a cell impassable, so the planner can still
+        use a busy aisle when the static warehouse map offers no alternative.
+        ``temporary`` remains reserved for genuinely blocked cells.
+        """
         blocked = set(temporary)
         blocked.discard(start)
         if start not in self.free or goal not in self.free or goal in blocked:
@@ -234,7 +245,8 @@ class OccupancyGridPlanner:
             if current_cost > cost_so_far.get(current, math.inf):
                 continue
             for neighbor, move_cost in self._neighbors(current, blocked):
-                new_cost = current_cost + move_cost
+                traffic_cost = max(0.0, float(penalties.get(neighbor, 0.0)))
+                new_cost = current_cost + move_cost * (1.0 + traffic_cost)
                 if new_cost >= cost_so_far.get(neighbor, math.inf):
                     continue
                 cost_so_far[neighbor] = new_cost

@@ -39,9 +39,11 @@ npm-debug.log*
 /.agents/
 /.codex/
 
+# Private deployment and infrastructure design documents
+/docs/
+
 # Raw captures and temporary exports
 *.webm
 *.mp4
 *.tmp
 *.bak
-

@@ -1,5 +1,5 @@
-async function request(path) {
-  const response = await fetch(path, { cache: 'no-store' });
+async function request(path, options = {}) {
+  const response = await fetch(path, { cache: 'no-store', ...options });
   const body = await response.text();
   let value;
   try {
@@ -25,4 +25,16 @@ export async function getState(query) {
     throw new Error('Traffic history unavailable');
   }
   return state;
+}
+
+export async function getRouteSuggestion(requestBody) {
+  const route = await request('/api/routes/suggest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+  if (!route.advisory_only || !route.baseline?.points || !route.suggested?.points) {
+    throw new Error('Route suggestion unavailable');
+  }
+  return route;
 }

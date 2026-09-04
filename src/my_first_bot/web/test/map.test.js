@@ -27,3 +27,26 @@ test('normal projection keeps map north at the top', () => {
   assert.deepEqual(map.project(-10, -20), { x: 0, y: 400 });
   assert.deepEqual(map.project(10, 20), { x: 400, y: 0 });
 });
+
+test('normal downsampled movement remains one continuous path', () => {
+  const map = mapProjection(false);
+  const segments = map.trackSegments([
+    [0, 0, 10],
+    [1.8, 0, 11],
+    [3.8, 0, 12],
+  ]);
+  assert.equal(segments.length, 1);
+  assert.equal(segments[0].length, 3);
+});
+
+test('teleport or localization jump starts a separate path segment', () => {
+  const map = mapProjection(false);
+  const segments = map.trackSegments([
+    [0, 0, 10],
+    [1, 0, 11],
+    [20, 20, 12],
+    [21, 20, 13],
+  ]);
+  assert.equal(segments.length, 2);
+  assert.deepEqual(segments.map((segment) => segment.length), [2, 2]);
+});
