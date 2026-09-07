@@ -638,6 +638,16 @@ class WebMonitor(Node):
                 vehicle_id for vehicle_id in str(row[7] or "").split(",")
                 if vehicle_id
             )
+            slow_vehicle_ids = sorted(
+                vehicle_id for vehicle_id in str(row[8] or "").split(",")
+                if vehicle_id
+            )
+            slow_states = {}
+            for item in str(row[9] or "").split(","):
+                if ":" not in item:
+                    continue
+                vehicle_id, state = item.split(":", 1)
+                slow_states.setdefault(vehicle_id, set()).add(state)
             value = {
                 "start": bucket_start,
                 "end": bucket_end,
@@ -646,6 +656,14 @@ class WebMonitor(Node):
                 "average_speed": float(row[5] or 0.0),
                 "slow_samples": int(row[6] or 0),
                 "vehicle_ids": vehicle_ids,
+                "slow_vehicle_ids": slow_vehicle_ids,
+                "slow_vehicle_states": [
+                    {
+                        "vehicle_id": vehicle_id,
+                        "states": sorted(slow_states.get(vehicle_id, {"unknown"})),
+                    }
+                    for vehicle_id in slow_vehicle_ids
+                ],
             }
             cell = cells.setdefault(
                 cell_key,
@@ -1100,14 +1118,31 @@ class WebMonitor(Node):
                                   THEN 1
                                 WHEN motion_state = 'unknown' AND speed < ? THEN 1
                                 ELSE 0
+                          END),
+                          GROUP_CONCAT(DISTINCT vehicle_id),
+                          GROUP_CONCAT(DISTINCT CASE
+                                WHEN motion_state IN
+                                  ('waiting_vehicle', 'blocked_obstacle', 'stalled', 'stuck')
+                                  THEN vehicle_id
+                                WHEN motion_state = 'unknown' AND speed < ? THEN vehicle_id
+                                ELSE NULL
                               END),
-                          GROUP_CONCAT(DISTINCT vehicle_id)
+                          GROUP_CONCAT(DISTINCT CASE
+                                WHEN motion_state IN
+                                  ('waiting_vehicle', 'blocked_obstacle', 'stalled', 'stuck')
+                                  THEN vehicle_id || ':' || motion_state
+                                WHEN motion_state = 'unknown' AND speed < ?
+                                  THEN vehicle_id || ':slow'
+                                ELSE NULL
+                              END)
                    FROM samples WHERE observed_at BETWEEN ? AND ?
                    GROUP BY 1, 2, 3""",
                 (
                     resolution,
                     resolution,
                     heat_bucket_seconds,
+                    self.get_parameter("slow_speed").value,
+                    self.get_parameter("slow_speed").value,
                     self.get_parameter("slow_speed").value,
                     start,
                     end,

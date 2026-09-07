@@ -28,6 +28,13 @@ export function heatTooltipLabel(value, metric = 'count') {
     lines.push(`Busiest: ${formatTimeWindow(peak.start, peak.end)}`);
     lines.push(`At peak: ${peak.count} samples · ${peak.vehicles} vehicle(s) · ${peak.slow_samples} slow`);
     if (peak.vehicle_ids?.length) lines.push(`Vehicles: ${peak.vehicle_ids.join(', ')}`);
+    const slowDetails = (peak.slow_vehicle_states || []).map((vehicle) => (
+      `${vehicle.vehicle_id} (${vehicle.states.map((state) => state.replaceAll('_', ' ')).join('/')})`
+    ));
+    lines.push(`Slow/problem: ${slowDetails.length ? slowDetails.join(', ') : 'none'}`);
+    const slowIds = new Set(peak.slow_vehicle_ids || []);
+    const normalIds = (peak.vehicle_ids || []).filter((vehicleId) => !slowIds.has(vehicleId));
+    lines.push(`Normal: ${normalIds.length ? normalIds.join(', ') : 'none'}`);
   }
   const stuck = value.time_details?.stuck;
   if (stuck?.events) {

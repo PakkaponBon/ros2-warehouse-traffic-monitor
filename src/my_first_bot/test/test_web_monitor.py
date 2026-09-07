@@ -173,6 +173,14 @@ def test_heat_cells_report_metric_peak_times_and_local_stuck_history(tmp_path):
         "vehicle_1", "vehicle_2", "vehicle_3"
     ]
     assert details["peaks"]["slow_samples"]["slow_samples"] == 3
+    assert details["peaks"]["count"]["slow_vehicle_ids"] == [
+        "vehicle_1", "vehicle_2", "vehicle_3"
+    ]
+    assert details["peaks"]["count"]["slow_vehicle_states"] == [
+        {"vehicle_id": "vehicle_1", "states": ["blocked_obstacle"]},
+        {"vehicle_id": "vehicle_2", "states": ["stuck"]},
+        {"vehicle_id": "vehicle_3", "states": ["waiting_vehicle"]},
+    ]
     assert details["stuck"]["events"] == 1
     assert details["stuck"]["vehicle_ids"] == ["vehicle_2"]
     assert details["stuck"]["peak"]["start"] == 300.0

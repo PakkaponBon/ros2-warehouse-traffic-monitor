@@ -130,8 +130,10 @@ the selected **Heat metric**:
 
 Point at a colored heat cell to inspect its coordinates, selected metric,
 average speed, busiest time interval, vehicles present during that peak, and
-confirmed stuck history. The hover interval automatically scales with the
-selected range; a one-hour heat trail uses five-minute peak intervals.
+confirmed stuck history. It separates normal vehicles from slow/problem
+vehicles and shows states such as waiting, blocked, stalled, or stuck. The
+hover interval automatically scales with the selected range; a one-hour heat
+trail uses five-minute peak intervals.
 
 Gray shapes are mapped shelves, walls, and fixed obstacles. `V1`-`V8` markers
 are the latest positions in the selected range, and purple diamonds are fixed

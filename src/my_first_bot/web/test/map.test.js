@@ -68,6 +68,10 @@ test('heat tooltip explains peak time, vehicles, and confirmed stuck history', (
           vehicles: 2,
           slow_samples: 12,
           vehicle_ids: ['vehicle_2', 'vehicle_5'],
+          slow_vehicle_ids: ['vehicle_5'],
+          slow_vehicle_states: [
+            { vehicle_id: 'vehicle_5', states: ['waiting_vehicle'] },
+          ],
         },
       },
       stuck: {
@@ -82,6 +86,8 @@ test('heat tooltip explains peak time, vehicles, and confirmed stuck history', (
   assert.match(label, /Busiest:/);
   assert.match(label, /At peak: 30 samples · 2 vehicle\(s\) · 12 slow/);
   assert.match(label, /Vehicles: vehicle_2, vehicle_5/);
+  assert.match(label, /Slow\/problem: vehicle_5 \(waiting vehicle\)/);
+  assert.match(label, /Normal: vehicle_2/);
   assert.match(label, /Confirmed stuck: 2 event\(s\) · 1 vehicle\(s\)/);
   assert.match(label, /Most stuck:/);
 });
