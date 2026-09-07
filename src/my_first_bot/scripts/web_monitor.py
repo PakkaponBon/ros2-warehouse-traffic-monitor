@@ -537,6 +537,193 @@ class WebMonitor(Node):
             hotspots.append(hotspot)
         return sorted(hotspots, key=lambda item: item["events"], reverse=True)
 
+    @staticmethod
+    def _stuck_timeline(rows, start, end, resolution, maximum_buckets=120):
+        """Find the busiest stuck location in each readable time bucket."""
+        duration = max(1.0, end - start)
+        bucket_options = (60, 300, 900, 3600, 21600, 86400)
+        bucket_seconds = next(
+            (
+                size
+                for size in bucket_options
+                if math.ceil(duration / size) <= maximum_buckets
+            ),
+            bucket_options[-1],
+        )
+        buckets = {}
+        for vehicle_id, x, y, started_at, ended_at in rows:
+            event_start = max(start, float(started_at))
+            event_end = min(end, float(ended_at))
+            if event_end < event_start:
+                continue
+            first_bucket = math.floor(event_start / bucket_seconds) * bucket_seconds
+            last_bucket = math.floor(
+                max(event_start, event_end - 1.0e-6) / bucket_seconds
+            ) * bucket_seconds
+            bucket_start = first_bucket
+            while bucket_start <= last_bucket:
+                cell_key = (
+                    math.floor(float(x) / resolution),
+                    math.floor(float(y) / resolution),
+                )
+                bucket = buckets.setdefault(
+                    bucket_start,
+                    {"vehicles": set(), "events": 0, "cells": {}},
+                )
+                bucket["vehicles"].add(vehicle_id)
+                bucket["events"] += 1
+                cell = bucket["cells"].setdefault(
+                    cell_key,
+                    {
+                        "x_sum": 0.0,
+                        "y_sum": 0.0,
+                        "events": 0,
+                        "vehicles": set(),
+                    },
+                )
+                cell["x_sum"] += float(x)
+                cell["y_sum"] += float(y)
+                cell["events"] += 1
+                cell["vehicles"].add(vehicle_id)
+                bucket_start += bucket_seconds
+
+        timeline = []
+        for bucket_start, bucket in sorted(buckets.items()):
+            hotspot = max(
+                bucket["cells"].values(),
+                key=lambda cell: (len(cell["vehicles"]), cell["events"]),
+            )
+            timeline.append(
+                {
+                    "start": max(start, bucket_start),
+                    "end": min(end, bucket_start + bucket_seconds),
+                    "total_vehicles": len(bucket["vehicles"]),
+                    "total_events": bucket["events"],
+                    "hotspot": {
+                        "x": hotspot["x_sum"] / hotspot["events"],
+                        "y": hotspot["y_sum"] / hotspot["events"],
+                        "vehicles": len(hotspot["vehicles"]),
+                        "events": hotspot["events"],
+                        "vehicle_ids": sorted(hotspot["vehicles"]),
+                    },
+                }
+            )
+        return {"bucket_seconds": bucket_seconds, "buckets": timeline}
+
+    @staticmethod
+    def _heat_bucket_seconds(start, end, maximum_buckets=24):
+        """Choose readable time buckets for per-cell heatmap hover details."""
+        duration = max(1.0, end - start)
+        options = (60, 300, 900, 3600, 21600, 86400)
+        return next(
+            (
+                size
+                for size in options
+                if math.ceil(duration / size) <= maximum_buckets
+            ),
+            options[-1],
+        )
+
+    @staticmethod
+    def _density_time_details(
+        rows, stuck_rows, start, end, resolution, bucket_seconds
+    ):
+        """Keep metric-specific peak times and stuck history for each heat cell."""
+        cells = {}
+        for row in rows:
+            cell_key = (int(row[0]), int(row[1]))
+            bucket_start = max(start, int(row[2]) * bucket_seconds)
+            bucket_end = min(end, (int(row[2]) + 1) * bucket_seconds)
+            vehicle_ids = sorted(
+                vehicle_id for vehicle_id in str(row[7] or "").split(",")
+                if vehicle_id
+            )
+            value = {
+                "start": bucket_start,
+                "end": bucket_end,
+                "count": int(row[3]),
+                "vehicles": int(row[4]),
+                "average_speed": float(row[5] or 0.0),
+                "slow_samples": int(row[6] or 0),
+                "vehicle_ids": vehicle_ids,
+            }
+            cell = cells.setdefault(
+                cell_key,
+                {
+                    "bucket_seconds": bucket_seconds,
+                    "peaks": {},
+                    "stuck": {
+                        "events": 0,
+                        "vehicles": set(),
+                        "buckets": {},
+                    },
+                },
+            )
+            for metric in ("count", "vehicles", "slow_samples"):
+                previous = cell["peaks"].get(metric)
+                # Prefer the latest bucket when two intervals have equal
+                # values so a live hover reports the most recent peak.
+                score = (value[metric], value["count"], value["start"])
+                previous_score = (
+                    previous[metric], previous["count"], previous["start"]
+                ) if previous else None
+                if previous_score is None or score > previous_score:
+                    cell["peaks"][metric] = value.copy()
+
+        for vehicle_id, x, y, started_at, ended_at in stuck_rows:
+            cell_key = (
+                math.floor(float(x) / resolution),
+                math.floor(float(y) / resolution),
+            )
+            if cell_key not in cells:
+                continue
+            event_start = max(start, float(started_at))
+            event_end = min(end, float(ended_at))
+            if event_end < event_start:
+                continue
+            stuck = cells[cell_key]["stuck"]
+            stuck["events"] += 1
+            stuck["vehicles"].add(vehicle_id)
+            first_bucket = math.floor(event_start / bucket_seconds) * bucket_seconds
+            last_bucket = math.floor(
+                max(event_start, event_end - 1.0e-6) / bucket_seconds
+            ) * bucket_seconds
+            bucket_start = first_bucket
+            while bucket_start <= last_bucket:
+                bucket = stuck["buckets"].setdefault(
+                    bucket_start, {"events": 0, "vehicles": set()}
+                )
+                bucket["events"] += 1
+                bucket["vehicles"].add(vehicle_id)
+                bucket_start += bucket_seconds
+
+        for cell in cells.values():
+            stuck = cell["stuck"]
+            peak = None
+            if stuck["buckets"]:
+                peak_start, peak_value = max(
+                    stuck["buckets"].items(),
+                    key=lambda item: (
+                        len(item[1]["vehicles"]),
+                        item[1]["events"],
+                        item[0],
+                    ),
+                )
+                peak = {
+                    "start": max(start, peak_start),
+                    "end": min(end, peak_start + bucket_seconds),
+                    "vehicles": len(peak_value["vehicles"]),
+                    "events": peak_value["events"],
+                    "vehicle_ids": sorted(peak_value["vehicles"]),
+                }
+            cell["stuck"] = {
+                "events": stuck["events"],
+                "vehicles": len(stuck["vehicles"]),
+                "vehicle_ids": sorted(stuck["vehicles"]),
+                "peak": peak,
+            }
+        return cells
+
     def _path_analytics(self, samples, stuck_rows, start, end):
         """Summarize path quality and identify the vehicle with the worst history."""
         slow_speed = float(self.get_parameter("slow_speed").value)
@@ -901,6 +1088,31 @@ class WebMonitor(Node):
                    GROUP BY 1, 2""",
                 (resolution, resolution, self.get_parameter("slow_speed").value, start, end),
             ).fetchall()
+            heat_bucket_seconds = self._heat_bucket_seconds(start, end)
+            density_time_rows = self.connection.execute(
+                """SELECT CAST(FLOOR(x / ?) AS INTEGER),
+                          CAST(FLOOR(y / ?) AS INTEGER),
+                          CAST(FLOOR(observed_at / ?) AS INTEGER),
+                          COUNT(*), COUNT(DISTINCT vehicle_id), AVG(speed),
+                          SUM(CASE
+                                WHEN motion_state IN
+                                  ('waiting_vehicle', 'blocked_obstacle', 'stalled', 'stuck')
+                                  THEN 1
+                                WHEN motion_state = 'unknown' AND speed < ? THEN 1
+                                ELSE 0
+                              END),
+                          GROUP_CONCAT(DISTINCT vehicle_id)
+                   FROM samples WHERE observed_at BETWEEN ? AND ?
+                   GROUP BY 1, 2, 3""",
+                (
+                    resolution,
+                    resolution,
+                    heat_bucket_seconds,
+                    self.get_parameter("slow_speed").value,
+                    start,
+                    end,
+                ),
+            ).fetchall()
             localization_summary = self.connection.execute(
                 """SELECT COUNT(*), AVG(position_error),
                           SQRT(AVG(position_error * position_error)),
@@ -948,6 +1160,17 @@ class WebMonitor(Node):
         congestion_hotspots = self._aggregate_events(
             congestion, start, end, event_resolution, congestion=True
         )
+        stuck_timeline = self._stuck_timeline(
+            stuck, start, end, event_resolution
+        )
+        density_time_details = self._density_time_details(
+            density_time_rows,
+            stuck,
+            start,
+            end,
+            resolution,
+            heat_bucket_seconds,
+        )
         path_analytics = self._path_analytics(samples, stuck, start, end)
         if validation_rows:
             uwb_validation = self._historical_validation(validation_rows)
@@ -976,6 +1199,19 @@ class WebMonitor(Node):
                     "vehicles": int(row[3]),
                     "average_speed": float(row[4]),
                     "slow_samples": int(row[5]),
+                    "time_details": density_time_details.get(
+                        (int(row[0]), int(row[1])),
+                        {
+                            "bucket_seconds": heat_bucket_seconds,
+                            "peaks": {},
+                            "stuck": {
+                                "events": 0,
+                                "vehicles": 0,
+                                "vehicle_ids": [],
+                                "peak": None,
+                            },
+                        },
+                    ),
                 }
                 for row in density_rows
             ],
@@ -994,6 +1230,7 @@ class WebMonitor(Node):
             ],
             "tracks": tracks,
             "stuck": stuck_hotspots,
+            "stuck_timeline": stuck_timeline,
             "congestion": congestion_hotspots,
             "analytics": {
                 "most_stuck_location": stuck_hotspots[0] if stuck_hotspots else None,

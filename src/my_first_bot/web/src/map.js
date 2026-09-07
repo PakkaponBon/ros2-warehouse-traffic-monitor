@@ -1,5 +1,44 @@
 const COLORS = ['#8d6bff', '#00a7d8', '#ef7d50', '#21a47b', '#d45fc0', '#789637', '#d99924', '#4a75dc', '#d35c69'];
 
+function formatTimeWindow(start, end) {
+  if (![Number(start), Number(end)].every(Number.isFinite)) return 'time unavailable';
+  const first = new Date(Number(start) * 1000);
+  const last = new Date(Number(end) * 1000);
+  const sameDay = first.toLocaleDateString() === last.toLocaleDateString();
+  const timeOptions = { hour: '2-digit', minute: '2-digit' };
+  if (sameDay) {
+    return `${first.toLocaleDateString()} ${first.toLocaleTimeString([], timeOptions)}–${last.toLocaleTimeString([], timeOptions)}`;
+  }
+  return `${first.toLocaleString([], timeOptions)}–${last.toLocaleString([], timeOptions)}`;
+}
+
+export function heatTooltipLabel(value, metric = 'count') {
+  const metricValue = Number(value[metric] || 0);
+  const description = metric === 'vehicles'
+    ? `${metricValue} unique vehicle(s)`
+    : metric === 'slow_samples'
+      ? `${metricValue} slow sample(s)`
+      : `${metricValue} occupancy sample(s)`;
+  const lines = [
+    `Heat cell · x ${Number(value.x).toFixed(2)}, y ${Number(value.y).toFixed(2)}`,
+    `${description} · average ${Number(value.average_speed || 0).toFixed(2)} m/s`,
+  ];
+  const peak = value.time_details?.peaks?.[metric];
+  if (peak) {
+    lines.push(`Busiest: ${formatTimeWindow(peak.start, peak.end)}`);
+    lines.push(`At peak: ${peak.count} samples · ${peak.vehicles} vehicle(s) · ${peak.slow_samples} slow`);
+    if (peak.vehicle_ids?.length) lines.push(`Vehicles: ${peak.vehicle_ids.join(', ')}`);
+  }
+  const stuck = value.time_details?.stuck;
+  if (stuck?.events) {
+    lines.push(`Confirmed stuck: ${stuck.events} event(s) · ${stuck.vehicles} vehicle(s)`);
+    if (stuck.peak) lines.push(`Most stuck: ${formatTimeWindow(stuck.peak.start, stuck.peak.end)}`);
+  } else {
+    lines.push('Confirmed stuck: none in this range');
+  }
+  return lines.join('\n');
+}
+
 export class WarehouseMap {
   constructor(canvas) {
     this.canvas = canvas;
@@ -113,16 +152,12 @@ export class WarehouseMap {
       gradient.addColorStop(0, `hsla(${hue}, 90%, 53%, ${0.15 + 0.4 * amount})`);
       gradient.addColorStop(1, `hsla(${hue}, 90%, 53%, 0)`);
       this.ctx.fillStyle = gradient; this.ctx.beginPath(); this.ctx.arc(x, y, radius, 0, Math.PI * 2); this.ctx.fill();
-      const description = metric === 'vehicles'
-        ? `${metricValue} unique vehicle(s)`
-        : metric === 'slow_samples'
-          ? `${metricValue} slow sample(s)`
-          : `${metricValue} occupancy sample(s)`;
       this.hits.push({
         x,
         y,
         radius,
-        label: `${description} · average ${Number(value.average_speed || 0).toFixed(2)} m/s`,
+        priority: 0,
+        label: heatTooltipLabel(value, metric),
       });
     });
   }
@@ -236,7 +271,7 @@ export class WarehouseMap {
     const { x, y } = this.project(value.x, value.y);
     this.ctx.fillStyle = color; this.ctx.beginPath(); this.ctx.arc(x, y, radius, 0, Math.PI * 2); this.ctx.fill();
     if (stroke) { this.ctx.strokeStyle = stroke; this.ctx.lineWidth = 2; this.ctx.stroke(); }
-    this.hits.push({ x, y, radius: Math.max(radius, 12), label });
+    this.hits.push({ x, y, radius: Math.max(radius, 12), priority: 2, label });
   }
 
   drawVehicle(vehicle) {
@@ -265,7 +300,7 @@ export class WarehouseMap {
     const labelWidth = this.ctx.measureText(label).width + 10; this.ctx.fillStyle = '#0b1825e8';
     this.ctx.fillRect(x - labelWidth / 2, y - 29, labelWidth, 16); this.ctx.fillStyle = '#f2f7fa';
     this.ctx.textAlign = 'center'; this.ctx.fillText(label, x, y - 17); this.ctx.textAlign = 'start';
-    this.hits.push({ x, y, radius: 13, label: `${vehicle.vehicle_id} · ${state.replaceAll('_', ' ')} · ${vehicle.speed.toFixed(2)} m/s · x ${vehicle.x.toFixed(2)}, y ${vehicle.y.toFixed(2)}` });
+    this.hits.push({ x, y, radius: 13, priority: 3, label: `${vehicle.vehicle_id} · ${state.replaceAll('_', ' ')} · ${vehicle.speed.toFixed(2)} m/s · x ${vehicle.x.toFixed(2)}, y ${vehicle.y.toFixed(2)}` });
   }
 
   drawUwbTags() {
@@ -293,6 +328,7 @@ export class WarehouseMap {
         x,
         y,
         radius: 14,
+        priority: 3,
         label: `UWB tag ${tag.id} · ${tag.enabled === false ? 'disabled' : 'enabled'} · battery ${Number(tag.battery_pct ?? 100).toFixed(0)}% · x ${Number(tag.x).toFixed(1)}, y ${Number(tag.y).toFixed(1)}, z ${Number(tag.z).toFixed(1)} m`,
       });
     });
@@ -354,7 +390,7 @@ export class WarehouseMap {
     this.ctx.fillStyle = '#f2f7fa';
     this.ctx.textAlign = 'center'; this.ctx.fillText(label, x, y + 40); this.ctx.textAlign = 'start';
     this.ctx.restore();
-    this.hits.push({ x, y, radius: 32, label: `${label} · x ${Number(this.focused.x).toFixed(2)}, y ${Number(this.focused.y).toFixed(2)}` });
+    this.hits.push({ x, y, radius: 32, priority: 4, label: `${label} · x ${Number(this.focused.x).toFixed(2)}, y ${Number(this.focused.y).toFixed(2)}` });
   }
 
   drawVehicleFocus(data) {
@@ -373,16 +409,28 @@ export class WarehouseMap {
     this.ctx.fillStyle = '#07111aeb'; this.ctx.fillRect(x - width / 2, y + 28, width, 18);
     this.ctx.fillStyle = '#f2f7fa'; this.ctx.textAlign = 'center'; this.ctx.fillText(label, x, y + 41); this.ctx.textAlign = 'start';
     this.ctx.restore();
-    this.hits.push({ x, y, radius: 34, label: `${label} · x ${Number(point.x).toFixed(2)}, y ${Number(point.y).toFixed(2)}` });
+    this.hits.push({ x, y, radius: 34, priority: 4, label: `${label} · x ${Number(point.x).toFixed(2)}, y ${Number(point.y).toFixed(2)}` });
   }
 
   showTooltip(event) {
     const box = this.canvas.getBoundingClientRect();
     const x = (event.clientX - box.left) * this.canvas.width / box.width;
     const y = (event.clientY - box.top) * this.canvas.height / box.height;
-    const hit = this.hits.slice().reverse().find((item) => Math.hypot(item.x - x, item.y - y) <= item.radius);
+    const hit = this.hits
+      .map((item) => ({ ...item, distance: Math.hypot(item.x - x, item.y - y) }))
+      .filter((item) => item.distance <= item.radius)
+      .sort((first, second) => (
+        Number(second.priority || 0) - Number(first.priority || 0)
+        || first.distance - second.distance
+      ))[0];
     if (!hit) { this.tooltip.style.display = 'none'; return; }
     this.tooltip.textContent = hit.label; this.tooltip.style.display = 'block';
-    this.tooltip.style.left = `${event.clientX - box.left + 14}px`; this.tooltip.style.top = `${event.clientY - box.top + 14}px`;
+    const wrapper = this.canvas.parentElement;
+    const wrapperBox = wrapper.getBoundingClientRect();
+    const preferredLeft = event.clientX - wrapperBox.left + 14;
+    const preferredTop = event.clientY - wrapperBox.top + 14;
+    const left = Math.max(6, Math.min(preferredLeft, wrapper.clientWidth - this.tooltip.offsetWidth - 6));
+    const top = Math.max(6, Math.min(preferredTop, wrapper.clientHeight - this.tooltip.offsetHeight - 6));
+    this.tooltip.style.left = `${left}px`; this.tooltip.style.top = `${top}px`;
   }
 }

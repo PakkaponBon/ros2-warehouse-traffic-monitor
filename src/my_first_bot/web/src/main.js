@@ -11,6 +11,7 @@ import {
   renderLocalization,
   renderMetrics,
   renderRouteSuggestion,
+  renderStuckTimeline,
   renderUwbValidation,
   renderVehicleSummary,
   setConnection,
@@ -289,6 +290,18 @@ app.innerHTML = `
             <div class="empty">No hotspots found.</div>
           </div>
         </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Stuck by time</h2>
+              <span class="sub">When, where, and how many vehicles were stuck</span>
+            </div>
+          </div>
+          <div id="stuckTimeline" class="stuck-timeline">
+            <div class="empty">No stuck vehicles in this time range.</div>
+          </div>
+        </section>
       </aside>
     </div>
   </main>
@@ -321,6 +334,7 @@ const emptyData = {
   density: [],
   tracks: [],
   stuck: [],
+  stuck_timeline: { bucket_seconds: 60, buckets: [] },
   congestion: [],
   start: new Date().toISOString(),
   end: new Date().toISOString(),
@@ -393,6 +407,7 @@ function render(data) {
   }
   renderAnalytics($('#analytics'), data.analytics);
   renderHotspots($('#hotspots'), data);
+  renderStuckTimeline($('#stuckTimeline'), data.stuck_timeline);
   updateRouteVehicles(data.latest);
   if (state.selectedHotspot) {
     const selected = [...document.querySelectorAll('#hotspots [data-hotspot]')].find((row) => (
@@ -636,6 +651,28 @@ $('#hotspots').addEventListener('click', (event) => {
     ? `${new Date(state.selectedHotspot.first_started * 1000).toLocaleString()} → ${new Date((state.selectedHotspot.last_ended || state.selectedHotspot.first_started) * 1000).toLocaleString()}`
     : 'time unavailable';
   $('#mapFocus').textContent = `${state.selectedHotspot.type} · x ${state.selectedHotspot.x.toFixed(1)} · y ${state.selectedHotspot.y.toFixed(1)} · ${state.selectedHotspot.events} event(s) · ${time}`;
+  $('.map-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+
+$('#stuckTimeline').addEventListener('click', (event) => {
+  const row = event.target.closest('[data-stuck-time]');
+  if (!row) return;
+
+  state.selectedVehicle = null;
+  $('#pathLayer').checked = false;
+  document.querySelectorAll('#summaryRows [data-vehicle]').forEach((item) => item.classList.remove('selected'));
+  document.querySelectorAll('#hotspots [data-hotspot]').forEach((item) => item.classList.remove('selected'));
+  state.selectedHotspot = {
+    x: Number(row.dataset.x),
+    y: Number(row.dataset.y),
+    type: 'Stuck',
+    events: Number(row.dataset.count),
+    first_started: Number(row.dataset.time),
+    last_ended: Number(row.dataset.time),
+  };
+  map.focusAt(state.selectedHotspot);
+  setSelected(Number(row.dataset.time));
+  $('#mapFocus').textContent = `Stuck at ${new Date(Number(row.dataset.time) * 1000).toLocaleTimeString()} · x ${state.selectedHotspot.x.toFixed(1)} · y ${state.selectedHotspot.y.toFixed(1)} · ${state.selectedHotspot.events} vehicle(s)`;
   $('.map-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
 });
 

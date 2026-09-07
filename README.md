@@ -104,6 +104,47 @@ npm test
 npm run build
 ```
 
+## Reading the dashboard heatmap
+
+Every map, path, metric, hotspot, and summary uses the time range selected at
+the top of the dashboard:
+
+- **Live now + Heat Trail** shows the most recent 5, 15, 30, or 60 minutes.
+- **Jump to time** shows one Heat Trail window ending at the selected time. For
+  example, jumping to 15:10 with a five-minute trail displays 15:05-15:10.
+- **Custom range** accepts an exact start and end time for a historical query.
+
+Heat colors are relative to the busiest cells in that selected range:
+
+- light blue/cyan: very low activity
+- green: low-to-medium activity
+- yellow/orange: busy
+- red: the highest activity
+
+Red does not automatically mean a vehicle was stuck. Its meaning depends on
+the selected **Heat metric**:
+
+- **Occupancy time**: vehicles spent more time in the cell.
+- **Unique vehicles**: more different vehicles visited the cell.
+- **Slow time**: vehicles spent more time moving slowly or waiting there.
+
+Point at a colored heat cell to inspect its coordinates, selected metric,
+average speed, busiest time interval, vehicles present during that peak, and
+confirmed stuck history. The hover interval automatically scales with the
+selected range; a one-hour heat trail uses five-minute peak intervals.
+
+Gray shapes are mapped shelves, walls, and fixed obstacles. `V1`-`V8` markers
+are the latest positions in the selected range, and purple diamonds are fixed
+UWB tags.
+
+Use **Top hotspots** to inspect aggregated stuck and congestion locations. The
+**Stuck by time** panel reports the busiest stuck location and distinct vehicle
+count for each time bucket, for example `15:01 - x 4.5, y 2.0 - 3 vehicles`.
+Short ranges use one-minute buckets; longer ranges automatically use larger
+buckets. Clicking a row focuses that location on the main map. A row appears
+only after a vehicle satisfies the configured stuck detector, which defaults
+to 60 seconds of blocked or commanded-without-progress behavior.
+
 ## Traffic classification
 
 Each vehicle publishes its operational context on:

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { WarehouseMap } from '../src/map.js';
+import { heatTooltipLabel, WarehouseMap } from '../src/map.js';
 
 function mapProjection(rotated) {
   const map = Object.create(WarehouseMap.prototype);
@@ -49,4 +49,39 @@ test('teleport or localization jump starts a separate path segment', () => {
   ]);
   assert.equal(segments.length, 2);
   assert.deepEqual(segments.map((segment) => segment.length), [2, 2]);
+});
+
+test('heat tooltip explains peak time, vehicles, and confirmed stuck history', () => {
+  const label = heatTooltipLabel({
+    x: 4.25,
+    y: -2.75,
+    count: 90,
+    vehicles: 3,
+    average_speed: 0.24,
+    slow_samples: 36,
+    time_details: {
+      peaks: {
+        count: {
+          start: 100,
+          end: 400,
+          count: 30,
+          vehicles: 2,
+          slow_samples: 12,
+          vehicle_ids: ['vehicle_2', 'vehicle_5'],
+        },
+      },
+      stuck: {
+        events: 2,
+        vehicles: 1,
+        peak: { start: 100, end: 400 },
+      },
+    },
+  }, 'count');
+
+  assert.match(label, /Heat cell · x 4\.25, y -2\.75/);
+  assert.match(label, /Busiest:/);
+  assert.match(label, /At peak: 30 samples · 2 vehicle\(s\) · 12 slow/);
+  assert.match(label, /Vehicles: vehicle_2, vehicle_5/);
+  assert.match(label, /Confirmed stuck: 2 event\(s\) · 1 vehicle\(s\)/);
+  assert.match(label, /Most stuck:/);
 });

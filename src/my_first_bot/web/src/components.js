@@ -183,6 +183,35 @@ export function renderHotspots(root, data) {
   </button>`).join('') : '<div class="empty">No stuck or congestion events.</div>';
 }
 
+export function renderStuckTimeline(root, timeline) {
+  const buckets = timeline?.buckets || [];
+  if (!buckets.length) {
+    root.innerHTML = '<div class="empty">No stuck vehicles in this time range.</div>';
+    return;
+  }
+  const bucketSeconds = timeline.bucket_seconds || 60;
+  const bucketLabel = bucketSeconds < 3600
+    ? `${bucketSeconds / 60} minute${bucketSeconds === 60 ? '' : 's'}`
+    : `${bucketSeconds / 3600} hour${bucketSeconds === 3600 ? '' : 's'}`;
+  root.innerHTML = `
+    <p class="timeline-note">Busiest stuck location per ${bucketLabel}; newest first.</p>
+    <div class="stuck-time-list">${[...buckets].reverse().map((bucket) => {
+      const hotspot = bucket.hotspot;
+      const time = new Date(bucket.start * 1000).toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit',
+      });
+      const vehicles = hotspot.vehicle_ids.map(escapeHtml).join(', ');
+      return `<button type="button" class="stuck-time-row" data-stuck-time
+        data-x="${hotspot.x}" data-y="${hotspot.y}"
+        data-time="${bucket.start}" data-count="${hotspot.vehicles}"
+        title="Show this stuck location on the map">
+        <span><b>${time}</b><small>x ${hotspot.x.toFixed(1)} · y ${hotspot.y.toFixed(1)}</small></span>
+        <span><strong>${hotspot.vehicles}</strong><small>at hotspot · ${bucket.total_vehicles} total</small></span>
+        <em>${vehicles}</em>
+      </button>`;
+    }).join('')}</div>`;
+}
+
 export function renderRouteSuggestion(root, route) {
   if (!route) {
     root.innerHTML = '<div class="empty">Choose a forklift and click a destination on the route map.</div>';

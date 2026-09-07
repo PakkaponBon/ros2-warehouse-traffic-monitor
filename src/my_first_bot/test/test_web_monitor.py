@@ -109,3 +109,72 @@ def test_route_suggestion_is_advisory_and_returns_two_routes(tmp_path):
     assert result["suggested"]["risk_score"] <= result["baseline"]["risk_score"]
     assert "command" not in result
     monitor.connection.close()
+
+
+def test_stuck_timeline_reports_busiest_location_per_minute(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    with monitor.connection:
+        monitor.connection.executemany(
+            """INSERT INTO stuck_events
+               (vehicle_id, started_at, ended_at, x, y, max_speed)
+               VALUES (?, ?, ?, ?, ?, 0.0)""",
+            [
+                ("vehicle_1", 60.0, 179.0, 4.1, 5.1),
+                ("vehicle_2", 121.0, 179.0, 4.3, 5.2),
+                ("vehicle_3", 125.0, 130.0, 12.0, 8.0),
+            ],
+        )
+
+    result = monitor.query({"start": ["60"], "end": ["180"]})
+
+    timeline = result["stuck_timeline"]
+    assert timeline["bucket_seconds"] == 60
+    assert len(timeline["buckets"]) == 2
+    second = timeline["buckets"][1]
+    assert second["start"] == 120.0
+    assert second["total_vehicles"] == 3
+    assert second["hotspot"]["vehicles"] == 2
+    assert second["hotspot"]["vehicle_ids"] == ["vehicle_1", "vehicle_2"]
+    assert 4.1 < second["hotspot"]["x"] < 4.3
+    monitor.connection.close()
+
+
+def test_heat_cells_report_metric_peak_times_and_local_stuck_history(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    rows = [
+        (100.0, "vehicle_1", 4.1, 5.1, 0.8, "moving"),
+        (110.0, "vehicle_2", 4.2, 5.2, 0.0, "waiting_vehicle"),
+        (310.0, "vehicle_1", 4.1, 5.1, 0.0, "blocked_obstacle"),
+        (320.0, "vehicle_2", 4.2, 5.2, 0.0, "stuck"),
+        (330.0, "vehicle_3", 4.2, 5.2, 0.0, "waiting_vehicle"),
+    ]
+    with monitor.connection:
+        monitor.connection.executemany(
+            """INSERT INTO samples
+               (observed_at, sim_time, vehicle_id, x, y, speed, source,
+                frame_id, motion_state, commanded_speed, intent_active)
+               VALUES (?, 10, ?, ?, ?, ?, 'amcl', 'map', ?, 0.8, 1)""",
+            rows,
+        )
+        monitor.connection.execute(
+            """INSERT INTO stuck_events
+               (vehicle_id, started_at, ended_at, x, y, max_speed)
+               VALUES ('vehicle_2', 315, 355, 4.2, 5.2, 0.0)"""
+        )
+
+    result = monitor.query({"start": ["60"], "end": ["600"]})
+
+    cell = result["density"][0]
+    details = cell["time_details"]
+    assert details["bucket_seconds"] == 60
+    assert details["peaks"]["count"]["start"] == 300.0
+    assert details["peaks"]["count"]["count"] == 3
+    assert details["peaks"]["vehicles"]["vehicle_ids"] == [
+        "vehicle_1", "vehicle_2", "vehicle_3"
+    ]
+    assert details["peaks"]["slow_samples"]["slow_samples"] == 3
+    assert details["stuck"]["events"] == 1
+    assert details["stuck"]["vehicle_ids"] == ["vehicle_2"]
+    assert details["stuck"]["peak"]["start"] == 300.0
+    assert monitor._heat_bucket_seconds(0.0, 3600.0) == 300
+    monitor.connection.close()
