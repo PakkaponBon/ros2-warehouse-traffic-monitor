@@ -4,6 +4,14 @@ ROS 2 Humble simulation for localizing warehouse vehicles with 2-D LiDAR,
 recording their movement history, and displaying density, stuck-vehicle, and
 congestion heatmaps in a browser.
 
+## Demo
+
+[![Warehouse traffic monitor demo](media/warehouse-traffic-demo.jpg)](media/warehouse-traffic-demo.mp4)
+
+Click the preview to watch the 73-second simulation demo showing the live
+warehouse map, vehicle paths, localization metrics, UWB validation, traffic
+heatmaps, and the Gazebo warehouse.
+
 ## Current simulation
 
 - Gazebo Classic realistic 60 m x 40 m warehouse

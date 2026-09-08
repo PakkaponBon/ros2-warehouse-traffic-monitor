@@ -47,3 +47,6 @@ npm-debug.log*
 *.mp4
 *.tmp
 *.bak
+
+# Curated, compressed portfolio demo
+!/media/warehouse-traffic-demo.mp4
