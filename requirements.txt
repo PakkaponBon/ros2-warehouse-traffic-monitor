@@ -1,0 +1,4 @@
+# Non-ROS Python runtime dependencies.
+# Install ROS 2 packages separately with rosdep; do not install rclpy from pip.
+Pillow>=9.0,<13.0
+PyYAML>=5.4,<7.0
