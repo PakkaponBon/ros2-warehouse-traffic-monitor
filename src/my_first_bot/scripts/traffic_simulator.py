@@ -417,9 +417,9 @@ class TrafficSimulator(Node):
                     -offset_x * math.sin(state["yaw"])
                     + offset_y * math.cos(state["yaw"])
                 )
-                # The traffic body is 0.9 x 0.6 m. Begin the deterministic
-                # emergency right-of-way response before their swept boxes
-                # can touch during a crossing turn.
+                # The traffic forklift envelope is 1.25 x 0.66 m. Begin the
+                # deterministic emergency right-of-way response before their
+                # swept boxes can touch during a crossing turn.
                 if gap < 1.05:
                     if emergency is None or gap < emergency[0]:
                         emergency = (gap, other_name)

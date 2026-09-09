@@ -1,81 +1,160 @@
 <?xml version="1.0"?>
 <sdf version="1.6">
-  <model name="traffic_vehicle">
+  <!--
+    Compact autonomous forklift used for warehouse traffic. Keep the ROS
+    namespace and frame markers intact: spawn_localized_vehicle.py replaces
+    them independently for every vehicle.
+
+    The collision footprint is 1.25 x 0.66 m (circumscribed radius 0.71 m),
+    which remains inside the 0.80 m clearance used by the route planner.
+  -->
+  <model name="traffic_forklift">
     <link name="body">
       <pose>0 0 0 0 0 0</pose>
       <inertial>
-        <mass>20.0</mass>
+        <mass>900.0</mass>
         <inertia>
-          <ixx>1.0</ixx>
-          <iyy>1.0</iyy>
-          <izz>1.0</izz>
+          <ixx>85.0</ixx>
+          <iyy>140.0</iyy>
+          <izz>170.0</izz>
         </inertia>
       </inertial>
-      <collision name="collision">
-        <geometry><box><size>0.9 0.6 0.6</size></box></geometry>
+
+      <!-- One conservative envelope keeps planar-motion collision stable. -->
+      <collision name="forklift_envelope">
+        <pose>0.10 0 0.22 0 0 0</pose>
+        <geometry><box><size>1.25 0.66 1.04</size></box></geometry>
       </collision>
-      <visual name="body_visual">
-        <pose>0 0 -0.06 0 0 0</pose>
-        <geometry><box><size>0.9 0.6 0.38</size></box></geometry>
+
+      <!-- Yellow power unit and rounded rear counterweight. -->
+      <visual name="power_unit">
+        <pose>-0.20 0 -0.06 0 0 0</pose>
+        <geometry><box><size>0.62 0.56 0.38</size></box></geometry>
         <material>
-          <ambient>0.15 0.70 1.0 1.0</ambient>
-          <diffuse>0.15 0.70 1.0 1.0</diffuse>
+          <ambient>0.95 0.55 0.03 1</ambient>
+          <diffuse>1.00 0.68 0.04 1</diffuse>
+          <specular>0.25 0.20 0.08 1</specular>
         </material>
       </visual>
-      <visual name="top_visual">
-        <pose>0 0 0.22 0 0 0</pose>
-        <geometry><box><size>0.46 0.42 0.18</size></box></geometry>
+      <visual name="rear_counterweight">
+        <pose>-0.50 0 -0.04 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.22</radius><length>0.54</length></cylinder></geometry>
         <material>
-          <ambient>0.05 0.25 0.38 1.0</ambient>
-          <diffuse>0.08 0.42 0.62 1.0</diffuse>
-        </material>
-      </visual>
-      <visual name="lidar_visual">
-        <pose>0 0 0.38 0 0 0</pose>
-        <geometry><cylinder><radius>0.09</radius><length>0.10</length></cylinder></geometry>
-        <material>
-          <ambient>0.08 0.10 0.12 1.0</ambient>
-          <diffuse>0.12 0.15 0.18 1.0</diffuse>
-        </material>
-      </visual>
-      <!-- Simulated UWB station.  The per-vehicle device ID is published by
-           uwb_simulator.py because Gazebo model templates are shared. -->
-      <visual name="uwb_station_visual">
-        <pose>0 0 0.49 0 0 0</pose>
-        <geometry><cylinder><radius>0.07</radius><length>0.035</length></cylinder></geometry>
-        <material>
-          <ambient>0.75 0.18 0.85 1.0</ambient>
-          <diffuse>0.95 0.28 0.95 1.0</diffuse>
-          <emissive>0.18 0.03 0.20 1.0</emissive>
-        </material>
-      </visual>
-      <visual name="front_marker">
-        <pose>0.46 0 0.03 0 1.5708 0</pose>
-        <geometry><cylinder><radius>0.09</radius><length>0.03</length></cylinder></geometry>
-        <material>
-          <ambient>1.0 0.75 0.10 1.0</ambient>
-          <diffuse>1.0 0.75 0.10 1.0</diffuse>
-        </material>
-      </visual>
-      <visual name="left_wheels">
-        <pose>0 -0.31 -0.12 1.5708 0 0</pose>
-        <geometry><cylinder><radius>0.15</radius><length>0.08</length></cylinder></geometry>
-        <material>
-          <ambient>0.03 0.04 0.05 1.0</ambient>
-          <diffuse>0.03 0.04 0.05 1.0</diffuse>
-        </material>
-      </visual>
-      <visual name="right_wheels">
-        <pose>0 0.31 -0.12 1.5708 0 0</pose>
-        <geometry><cylinder><radius>0.15</radius><length>0.08</length></cylinder></geometry>
-        <material>
-          <ambient>0.03 0.04 0.05 1.0</ambient>
-          <diffuse>0.03 0.04 0.05 1.0</diffuse>
+          <ambient>0.82 0.31 0.02 1</ambient>
+          <diffuse>0.95 0.42 0.02 1</diffuse>
         </material>
       </visual>
 
+      <!-- Operator seat and overhead safety guard. -->
+      <visual name="seat_base">
+        <pose>-0.22 0 0.20 0 0 0</pose>
+        <geometry><box><size>0.28 0.32 0.12</size></box></geometry>
+        <material><ambient>0.04 0.05 0.06 1</ambient><diffuse>0.07 0.08 0.09 1</diffuse></material>
+      </visual>
+      <visual name="seat_back">
+        <pose>-0.36 0 0.38 0 -0.12 0</pose>
+        <geometry><box><size>0.10 0.32 0.34</size></box></geometry>
+        <material><ambient>0.04 0.05 0.06 1</ambient><diffuse>0.07 0.08 0.09 1</diffuse></material>
+      </visual>
+      <visual name="guard_left_front">
+        <pose>0.02 0.25 0.42 0 0 0</pose>
+        <geometry><box><size>0.045 0.045 0.72</size></box></geometry>
+        <material><ambient>0.08 0.09 0.10 1</ambient><diffuse>0.12 0.13 0.14 1</diffuse></material>
+      </visual>
+      <visual name="guard_right_front">
+        <pose>0.02 -0.25 0.42 0 0 0</pose>
+        <geometry><box><size>0.045 0.045 0.72</size></box></geometry>
+        <material><ambient>0.08 0.09 0.10 1</ambient><diffuse>0.12 0.13 0.14 1</diffuse></material>
+      </visual>
+      <visual name="guard_left_rear">
+        <pose>-0.45 0.25 0.42 0 0 0</pose>
+        <geometry><box><size>0.045 0.045 0.72</size></box></geometry>
+        <material><ambient>0.08 0.09 0.10 1</ambient><diffuse>0.12 0.13 0.14 1</diffuse></material>
+      </visual>
+      <visual name="guard_right_rear">
+        <pose>-0.45 -0.25 0.42 0 0 0</pose>
+        <geometry><box><size>0.045 0.045 0.72</size></box></geometry>
+        <material><ambient>0.08 0.09 0.10 1</ambient><diffuse>0.12 0.13 0.14 1</diffuse></material>
+      </visual>
+      <visual name="overhead_guard">
+        <pose>-0.215 0 0.78 0 0 0</pose>
+        <geometry><box><size>0.54 0.58 0.055</size></box></geometry>
+        <material><ambient>0.08 0.09 0.10 1</ambient><diffuse>0.12 0.13 0.14 1</diffuse></material>
+      </visual>
+
+      <!-- Twin mast, carriage, and low forks point in +X (vehicle front). -->
+      <visual name="mast_left">
+        <pose>0.13 0.255 0.34 0 0 0</pose>
+        <geometry><box><size>0.065 0.065 0.92</size></box></geometry>
+        <material><ambient>0.06 0.07 0.08 1</ambient><diffuse>0.10 0.11 0.12 1</diffuse></material>
+      </visual>
+      <visual name="mast_right">
+        <pose>0.13 -0.255 0.34 0 0 0</pose>
+        <geometry><box><size>0.065 0.065 0.92</size></box></geometry>
+        <material><ambient>0.06 0.07 0.08 1</ambient><diffuse>0.10 0.11 0.12 1</diffuse></material>
+      </visual>
+      <visual name="mast_top">
+        <pose>0.13 0 0.79 0 0 0</pose>
+        <geometry><box><size>0.075 0.57 0.07</size></box></geometry>
+        <material><ambient>0.06 0.07 0.08 1</ambient><diffuse>0.10 0.11 0.12 1</diffuse></material>
+      </visual>
+      <visual name="fork_carriage">
+        <pose>0.17 0 -0.10 0 0 0</pose>
+        <geometry><box><size>0.09 0.51 0.16</size></box></geometry>
+        <material><ambient>0.10 0.11 0.12 1</ambient><diffuse>0.17 0.18 0.19 1</diffuse></material>
+      </visual>
+      <visual name="left_fork">
+        <pose>0.43 0.17 -0.265 0 0 0</pose>
+        <geometry><box><size>0.56 0.065 0.055</size></box></geometry>
+        <material><ambient>0.22 0.23 0.24 1</ambient><diffuse>0.38 0.40 0.42 1</diffuse><specular>0.25 0.25 0.25 1</specular></material>
+      </visual>
+      <visual name="right_fork">
+        <pose>0.43 -0.17 -0.265 0 0 0</pose>
+        <geometry><box><size>0.56 0.065 0.055</size></box></geometry>
+        <material><ambient>0.22 0.23 0.24 1</ambient><diffuse>0.38 0.40 0.42 1</diffuse><specular>0.25 0.25 0.25 1</specular></material>
+      </visual>
+
+      <!-- Four wheels make the vehicle read clearly as a forklift. -->
+      <visual name="front_left_wheel">
+        <pose>0.04 0.31 -0.15 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.16</radius><length>0.09</length></cylinder></geometry>
+        <material><ambient>0.025 0.025 0.025 1</ambient><diffuse>0.04 0.04 0.04 1</diffuse></material>
+      </visual>
+      <visual name="front_right_wheel">
+        <pose>0.04 -0.31 -0.15 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.16</radius><length>0.09</length></cylinder></geometry>
+        <material><ambient>0.025 0.025 0.025 1</ambient><diffuse>0.04 0.04 0.04 1</diffuse></material>
+      </visual>
+      <visual name="rear_left_wheel">
+        <pose>-0.42 0.30 -0.18 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.12</radius><length>0.08</length></cylinder></geometry>
+        <material><ambient>0.025 0.025 0.025 1</ambient><diffuse>0.04 0.04 0.04 1</diffuse></material>
+      </visual>
+      <visual name="rear_right_wheel">
+        <pose>-0.42 -0.30 -0.18 1.5708 0 0</pose>
+        <geometry><cylinder><radius>0.12</radius><length>0.08</length></cylinder></geometry>
+        <material><ambient>0.025 0.025 0.025 1</ambient><diffuse>0.04 0.04 0.04 1</diffuse></material>
+      </visual>
+
+      <visual name="front_marker">
+        <pose>0.165 0 0.66 0 1.5708 0</pose>
+        <geometry><cylinder><radius>0.075</radius><length>0.035</length></cylinder></geometry>
+        <material><ambient>1.0 0.82 0.12 1</ambient><diffuse>1.0 0.82 0.12 1</diffuse><emissive>0.35 0.25 0.02 1</emissive></material>
+      </visual>
+      <visual name="lidar_visual">
+        <pose>-0.12 0 0.84 0 0 0</pose>
+        <geometry><cylinder><radius>0.075</radius><length>0.08</length></cylinder></geometry>
+        <material><ambient>0.05 0.08 0.10 1</ambient><diffuse>0.10 0.18 0.22 1</diffuse></material>
+      </visual>
+      <!-- Per-vehicle UWB device IDs are published by uwb_simulator.py. -->
+      <visual name="uwb_station_visual">
+        <pose>-0.31 0 0.84 0 0 0</pose>
+        <geometry><cylinder><radius>0.06</radius><length>0.04</length></cylinder></geometry>
+        <material><ambient>0.75 0.18 0.85 1</ambient><diffuse>0.95 0.28 0.95 1</diffuse><emissive>0.18 0.03 0.20 1</emissive></material>
+      </visual>
+
       <sensor name="lidar" type="ray">
-        <pose>0 0 0.38 0 0 0</pose>
+        <pose>-0.12 0 0.84 0 0 0</pose>
         <always_on>true</always_on>
         <visualize>false</visualize>
         <update_rate>10</update_rate>
@@ -88,16 +167,8 @@
               <max_angle>3.14159265</max_angle>
             </horizontal>
           </scan>
-          <range>
-            <min>0.15</min>
-            <max>20.0</max>
-            <resolution>0.01</resolution>
-          </range>
-          <noise>
-            <type>gaussian</type>
-            <mean>0.0</mean>
-            <stddev>0.01</stddev>
-          </noise>
+          <range><min>0.15</min><max>20.0</max><resolution>0.01</resolution></range>
+          <noise><type>gaussian</type><mean>0.0</mean><stddev>0.01</stddev></noise>
         </ray>
         <plugin name="lidar_ros" filename="libgazebo_ros_ray_sensor.so">
           <ros>

@@ -1,4 +1,4 @@
-"""Launch the warehouse simulation, 2-D localization, and traffic history stack."""
+"""Launch the reusable simulation, localization, and traffic-monitoring stack."""
 
 from pathlib import Path
 

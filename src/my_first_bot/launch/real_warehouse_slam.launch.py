@@ -81,7 +81,7 @@ def generate_launch_description():
                 executable="static_transform_publisher",
                 name="vehicle_1_laser_transform",
                 arguments=[
-                    "--x", "0", "--y", "0", "--z", "0.38",
+                    "--x", "-0.12", "--y", "0", "--z", "0.84",
                     "--yaw", "0", "--pitch", "0", "--roll", "0",
                     "--frame-id", "vehicle_1/base_link",
                     "--child-frame-id", "vehicle_1/laser",
