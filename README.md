@@ -60,6 +60,14 @@ The default launch starts eight vehicles at safe randomized positions, loads
 the saved SLAM map, enables AMCL/UWB validation, records traffic, and serves the
 dashboard at <http://127.0.0.1:8080>.
 
+The read-only system-health page is available at
+<http://127.0.0.1:8080/health.html>. It reports web/database availability,
+recorder freshness, and the latest telemetry, localization, UWB, and LiDAR
+diagnostic state for each configured vehicle. A vehicle is online when its
+latest position is under five seconds old, stale from five through fifteen
+seconds, and offline after fifteen seconds. Sensors without a dedicated
+diagnostic heartbeat are shown as unknown rather than assumed healthy.
+
 Useful overrides:
 
 ```bash
@@ -205,8 +213,8 @@ colcon test-result --verbose
 This repository is a simulation and analytics prototype. The random route
 planner is used to generate warehouse traffic; it is not intended to control a
 real forklift. A real deployment still needs calibrated sensors, a fleet data
-adapter, health monitoring, network security, database retention, and
-site-specific safety validation.
+adapter, dedicated hardware heartbeats, network security, enforced database
+retention, and site-specific safety validation.
 
 ## Licensing and assets
 

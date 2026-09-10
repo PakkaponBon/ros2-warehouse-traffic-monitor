@@ -119,7 +119,11 @@ class MonitorHandler(BaseHTTPRequestHandler):
             except Exception as error:
                 self._send(404, "text/plain", str(error).encode())
         elif parsed.path == "/api/health":
-            self._send(200, "application/json", b'{"ok":true}')
+            try:
+                payload = self.monitor.health_snapshot()
+                self._send(200, "application/json", json.dumps(payload).encode())
+            except Exception as error:
+                self._send(500, "application/json", json.dumps({"ok": False, "error": str(error)}).encode())
         elif parsed.path == "/api/debug":
             try:
                 payload = self.monitor.debug_snapshot(parse_qs(parsed.query))
@@ -179,6 +183,9 @@ class WebMonitor(Node):
         self.declare_parameter("map_image", "")
         self.declare_parameter("uwb_tag_config", "")
         self.declare_parameter("traffic_vehicle_count", 8)
+        self.declare_parameter("health_online_after", 5.0)
+        self.declare_parameter("health_offline_after", 15.0)
+        self.declare_parameter("software_version", "0.0.0")
         self.declare_parameter("web_root", "")
         self.declare_parameter("route_planning_resolution", 0.30)
         self.declare_parameter("route_robot_radius", 0.55)
@@ -1312,6 +1319,221 @@ class WebMonitor(Node):
             "last": float(row[1]),
             "first_iso": iso_time(row[0]),
             "last_iso": iso_time(row[1]),
+        }
+
+    def health_snapshot(self, now=None):
+        """
+        Return measured service and vehicle freshness for the health page.
+
+        A recent position proves that telemetry reached the recorder; it does
+        not prove that every physical sensor is healthy. LiDAR therefore stays
+        ``unknown`` until a dedicated sensor heartbeat exists, unless the
+        vehicle explicitly reports ``sensor_wait``.
+        """
+        now = time.time() if now is None else float(now)
+        online_after = max(
+            0.1, float(self.get_parameter("health_online_after").value)
+        )
+        offline_after = max(
+            online_after,
+            float(self.get_parameter("health_offline_after").value),
+        )
+
+        def freshness(observed_at):
+            if observed_at is None:
+                return "unknown", None
+            age = max(0.0, now - float(observed_at))
+            if age < online_after:
+                return "online", age
+            if age <= offline_after:
+                return "stale", age
+            return "offline", age
+
+        with self.lock:
+            database_path = Path(
+                self.connection.execute("PRAGMA database_list").fetchone()[2]
+            )
+            sample_summary = self.connection.execute(
+                "SELECT COUNT(*), MAX(observed_at) FROM samples"
+            ).fetchone()
+            sample_rows = self.connection.execute(
+                """SELECT vehicle_id, observed_at, x, y, speed, source,
+                          frame_id, motion_state
+                   FROM samples
+                   WHERE id IN (SELECT MAX(id) FROM samples GROUP BY vehicle_id)
+                   ORDER BY vehicle_id"""
+            ).fetchall()
+            localization_rows = self.connection.execute(
+                """SELECT vehicle_id, observed_at, covariance_trace,
+                          position_error
+                   FROM localization_metrics
+                   WHERE id IN (
+                     SELECT MAX(id) FROM localization_metrics GROUP BY vehicle_id
+                   )"""
+            ).fetchall()
+            validation_rows = self.connection.execute(
+                """SELECT vehicle_id, observed_at, state, error_m,
+                          visible_tag_count, uwb_reason
+                   FROM localization_validation_samples
+                   WHERE id IN (
+                     SELECT MAX(id) FROM localization_validation_samples
+                     GROUP BY vehicle_id
+                   )"""
+            ).fetchall()
+
+        database_bytes = 0
+        for suffix in ("", "-wal", "-shm"):
+            candidate = Path(f"{database_path}{suffix}")
+            try:
+                database_bytes += candidate.stat().st_size
+            except OSError:
+                pass
+
+        localization = {
+            row[0]: {
+                "observed_at": float(row[1]),
+                "covariance_trace": float(row[2]),
+                "position_error_m": float(row[3]),
+            }
+            for row in localization_rows
+        }
+        validation = {
+            row[0]: {
+                "observed_at": float(row[1]),
+                "state": row[2],
+                "error_m": None if row[3] is None else float(row[3]),
+                "visible_tag_count": int(row[4]),
+                "reason": row[5],
+            }
+            for row in validation_rows
+        }
+
+        latest_by_vehicle = {row[0]: row for row in sample_rows}
+        expected_ids = {
+            f"vehicle_{index}"
+            for index in range(
+                1, int(self.get_parameter("traffic_vehicle_count").value) + 1
+            )
+        }
+        vehicle_ids = sorted(
+            expected_ids
+            | set(latest_by_vehicle)
+            | set(localization)
+            | set(validation)
+        )
+        vehicles = []
+        for vehicle_id in vehicle_ids:
+            row = latest_by_vehicle.get(vehicle_id)
+            observed_at = None if row is None else float(row[1])
+            status, age = freshness(observed_at)
+            source = None if row is None else row[5]
+            motion_state = "unknown" if row is None else row[7]
+            localization_metric = localization.get(vehicle_id)
+            uwb = validation.get(vehicle_id)
+            if uwb is not None:
+                uwb_freshness, uwb_age = freshness(uwb["observed_at"])
+                uwb = {
+                    **uwb,
+                    "freshness": uwb_freshness,
+                    "age_seconds": uwb_age,
+                }
+
+            if motion_state == "sensor_wait":
+                lidar = {
+                    "state": "unavailable",
+                    "detail": "Vehicle reports that it is waiting for LiDAR",
+                }
+            else:
+                lidar = {
+                    "state": "unknown",
+                    "detail": "Dedicated LiDAR heartbeat is not configured",
+                }
+
+            if source and str(source).startswith("amcl"):
+                localization_state = status
+            elif motion_state in {"localizing", "sensor_wait"}:
+                localization_state = "unavailable"
+            else:
+                localization_state = "unknown"
+
+            vehicles.append(
+                {
+                    "vehicle_id": vehicle_id,
+                    "status": status,
+                    "last_seen": None if observed_at is None else iso_time(observed_at),
+                    "age_seconds": age,
+                    "position": None if row is None else {
+                        "x": float(row[2]),
+                        "y": float(row[3]),
+                        "frame_id": row[6],
+                    },
+                    "speed": None if row is None else float(row[4]),
+                    "motion_state": motion_state,
+                    "localization": {
+                        "state": localization_state,
+                        "source": source,
+                        "covariance_trace": (
+                            None
+                            if localization_metric is None
+                            else localization_metric["covariance_trace"]
+                        ),
+                        "position_error_m": (
+                            None
+                            if localization_metric is None
+                            else localization_metric["position_error_m"]
+                        ),
+                    },
+                    "uwb": uwb or {
+                        "state": "unknown",
+                        "freshness": "unknown",
+                        "age_seconds": None,
+                        "error_m": None,
+                        "visible_tag_count": 0,
+                        "reason": "no_validation_received",
+                    },
+                    "lidar": lidar,
+                }
+            )
+
+        newest_sample = sample_summary[1]
+        recorder_status, recorder_age = freshness(newest_sample)
+        status_counts = {
+            name: sum(1 for vehicle in vehicles if vehicle["status"] == name)
+            for name in ("online", "stale", "offline", "unknown")
+        }
+        return {
+            "ok": True,
+            "generated_at": iso_time(now),
+            "thresholds": {
+                "online_under_seconds": online_after,
+                "offline_over_seconds": offline_after,
+            },
+            "software_version": str(
+                self.get_parameter("software_version").value
+            ),
+            "summary": {"total": len(vehicles), **status_counts},
+            "services": {
+                "web_api": {"status": "online"},
+                "database": {
+                    "status": "online",
+                    "file": database_path.name,
+                    "bytes": database_bytes,
+                    "samples": int(sample_summary[0]),
+                    "newest_sample": (
+                        None if newest_sample is None else iso_time(newest_sample)
+                    ),
+                },
+                "traffic_recorder": {
+                    "status": recorder_status,
+                    "age_seconds": recorder_age,
+                    "detail": (
+                        "Inferred from the newest stored position sample"
+                        if newest_sample is not None
+                        else "No position samples have been recorded"
+                    ),
+                },
+            },
+            "vehicles": vehicles,
         }
 
     def debug_snapshot(self, query):

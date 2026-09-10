@@ -35,6 +35,10 @@ app.innerHTML = `
       <i></i>
       <span>Connecting…</span>
     </div>
+    <nav class="top-links" aria-label="Dashboard pages">
+      <a class="active" href="/">Traffic</a>
+      <a href="/health.html">System health</a>
+    </nav>
   </header>
 
   <section class="toolbar">

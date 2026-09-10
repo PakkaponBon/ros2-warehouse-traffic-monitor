@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getMap, getRouteSuggestion, getState } from '../src/api.js';
+import {
+  getHealth,
+  getMap,
+  getRouteSuggestion,
+  getState,
+} from '../src/api.js';
 
 
 test('getMap accepts complete map metadata', async () => {
@@ -24,6 +29,22 @@ test('getMap rejects incomplete metadata', async () => {
 test('getState rejects an invalid API payload', async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ latest: [] }));
   await assert.rejects(getState({ hours: 1 }), /Traffic history unavailable/);
+});
+
+
+test('getHealth accepts measured service and vehicle health', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    ok: true,
+    services: { web_api: { status: 'online' } },
+    vehicles: [{ vehicle_id: 'vehicle_1', status: 'online' }],
+  }));
+  assert.equal((await getHealth()).vehicles[0].status, 'online');
+});
+
+
+test('getHealth rejects a placeholder or incomplete payload', async () => {
+  globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }));
+  await assert.rejects(getHealth(), /System health unavailable/);
 });
 
 

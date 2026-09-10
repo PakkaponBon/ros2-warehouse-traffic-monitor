@@ -19,6 +19,13 @@ export async function getMap() {
   return map;
 }
 export const getBounds = () => request('/api/bounds');
+export async function getHealth() {
+  const health = await request('/api/health');
+  if (!health.ok || !health.services || !Array.isArray(health.vehicles)) {
+    throw new Error('System health unavailable');
+  }
+  return health;
+}
 export async function getState(query) {
   const state = await request(`/api/state?${new URLSearchParams(query)}`);
   if (!Array.isArray(state.latest) || !Array.isArray(state.density)) {

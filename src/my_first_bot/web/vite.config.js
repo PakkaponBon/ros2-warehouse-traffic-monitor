@@ -8,6 +8,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         dashboard: resolve(process.cwd(), 'index.html'),
+        health: resolve(process.cwd(), 'health.html'),
         debug: resolve(process.cwd(), 'debug.html'),
       },
     },

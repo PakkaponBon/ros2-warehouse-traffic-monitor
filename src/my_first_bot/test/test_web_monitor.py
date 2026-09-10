@@ -23,6 +23,10 @@ def make_monitor(database):
         "latest_max_age": 10.0,
         "max_track_points": 240,
         "max_analysis_samples": 100000,
+        "traffic_vehicle_count": 4,
+        "health_online_after": 5.0,
+        "health_offline_after": 15.0,
+        "software_version": "test",
     }
     monitor.get_parameter = lambda name: SimpleNamespace(value=parameters[name])
     return monitor
@@ -185,4 +189,48 @@ def test_heat_cells_report_metric_peak_times_and_local_stuck_history(tmp_path):
     assert details["stuck"]["vehicle_ids"] == ["vehicle_2"]
     assert details["stuck"]["peak"]["start"] == 300.0
     assert monitor._heat_bucket_seconds(0.0, 3600.0) == 300
+    monitor.connection.close()
+
+
+def test_health_snapshot_distinguishes_online_stale_offline_and_unknown(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    rows = [
+        (98.0, "vehicle_1", "moving"),
+        (90.0, "vehicle_2", "idle"),
+        (70.0, "vehicle_3", "sensor_wait"),
+    ]
+    with monitor.connection:
+        monitor.connection.executemany(
+            """INSERT INTO samples
+               (observed_at, sim_time, vehicle_id, x, y, speed, source,
+                frame_id, motion_state, commanded_speed, intent_active)
+               VALUES (?, 10, ?, 1, 2, 0.5, 'amcl', 'map', ?, 0.5, 1)""",
+            rows,
+        )
+        monitor.connection.execute(
+            """INSERT INTO localization_validation_samples
+               (observed_at, sim_time, vehicle_id, state, raw_state,
+                authoritative_source, visible_tag_count, uwb_reason)
+               VALUES (98, 10, 'vehicle_1', 'confirmed', 'confirmed',
+                       'amcl', 4, 'ok')"""
+        )
+
+    result = monitor.health_snapshot(now=100.0)
+    vehicles = {item["vehicle_id"]: item for item in result["vehicles"]}
+
+    assert result["summary"] == {
+        "total": 4,
+        "online": 1,
+        "stale": 1,
+        "offline": 1,
+        "unknown": 1,
+    }
+    assert vehicles["vehicle_1"]["status"] == "online"
+    assert vehicles["vehicle_1"]["uwb"]["state"] == "confirmed"
+    assert vehicles["vehicle_2"]["status"] == "stale"
+    assert vehicles["vehicle_3"]["status"] == "offline"
+    assert vehicles["vehicle_3"]["lidar"]["state"] == "unavailable"
+    assert vehicles["vehicle_4"]["status"] == "unknown"
+    assert vehicles["vehicle_4"]["lidar"]["state"] == "unknown"
+    assert result["services"]["traffic_recorder"]["status"] == "online"
     monitor.connection.close()
