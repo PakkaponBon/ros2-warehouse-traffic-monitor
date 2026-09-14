@@ -6,6 +6,7 @@ import {
   getMap,
   getRouteSuggestion,
   getState,
+  setSimulationFault,
 } from '../src/api.js';
 
 
@@ -45,6 +46,27 @@ test('getHealth accepts measured service and vehicle health', async () => {
 test('getHealth rejects a placeholder or incomplete payload', async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ ok: true }));
   await assert.rejects(getHealth(), /System health unavailable/);
+});
+
+
+test('setSimulationFault posts a guarded simulation command', async () => {
+  let request;
+  globalThis.fetch = async (path, options) => {
+    request = { path, options };
+    return new Response(JSON.stringify({
+      enabled: true,
+      simulation_only: true,
+      active: [{ vehicle_id: 'vehicle_2', faults: ['freeze'] }],
+    }));
+  };
+
+  await setSimulationFault({
+    vehicle_id: 'vehicle_2', fault: 'freeze', enabled: true,
+  });
+
+  assert.equal(request.path, '/api/simulation/faults');
+  assert.equal(request.options.method, 'POST');
+  assert.equal(JSON.parse(request.options.body).fault, 'freeze');
 });
 
 

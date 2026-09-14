@@ -21,6 +21,8 @@ from std_msgs.msg import String
 from visualization_msgs.msg import Marker, MarkerArray
 import yaml
 
+from simulation_faults import parse_fault_state
+
 
 class UwbSimulator(Node):
     """Emulate a UWB station mounted on every configured vehicle."""
@@ -78,6 +80,7 @@ class UwbSimulator(Node):
         self.status_publishers = {}
         self.id_publishers = {}
         self.device_ids = {}
+        self.injected_faults = {}
         for vehicle_name in self.vehicle_names:
             topic_root = f"/traffic/{vehicle_name}"
             self.pose_publishers[vehicle_name] = self.create_publisher(
@@ -101,6 +104,12 @@ class UwbSimulator(Node):
 
         self.positions = {}
         self.create_subscription(ModelStates, "/gazebo/model_states", self.on_models, 10)
+        self.create_subscription(
+            String,
+            "/traffic/simulation_faults",
+            self.on_simulation_faults,
+            10,
+        )
         rate = max(0.1, float(self.get_parameter("update_rate").value))
         self.create_timer(1.0 / rate, self.publish_fixes)
         self.get_logger().info(
@@ -185,6 +194,10 @@ class UwbSimulator(Node):
                     float(pose.position.x),
                     float(pose.position.y),
                 )
+
+    def on_simulation_faults(self, message):
+        """Apply the latest complete simulation fault registry."""
+        self.injected_faults = parse_fault_state(message.data, self.vehicle_names)
 
     def to_map(self, x, y):
         """Apply the same world-to-map transform used by traffic recording."""
@@ -275,6 +288,21 @@ class UwbSimulator(Node):
         """Publish a solved position and ranging status for every vehicle."""
         stamp = self.get_clock().now().to_msg()
         for vehicle_name, (world_x, world_y) in self.positions.items():
+            if "uwb_dropout" in self.injected_faults.get(vehicle_name, set()):
+                status = {
+                    "vehicle_id": vehicle_name,
+                    "device_id": self.device_ids[vehicle_name],
+                    "visible_tag_count": 0,
+                    "visible_tags": [],
+                    "ranges": [],
+                    "fix_valid": False,
+                    "residual_m": None,
+                    "reason": "injected_dropout",
+                }
+                self.status_publishers[vehicle_name].publish(
+                    String(data=json.dumps(status, separators=(",", ":")))
+                )
+                continue
             true_map_x, true_map_y = self.to_map(world_x, world_y)
             observations = self.simulate_ranges(true_map_x, true_map_y)
             solution = None

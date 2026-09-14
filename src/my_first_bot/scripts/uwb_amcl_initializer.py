@@ -17,6 +17,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from simulation_faults import parse_fault_state
+
 
 def localization_topics(vehicle_name, main_vehicle="my_robot"):
     """Return localization and recovery topics for one vehicle."""
@@ -129,6 +131,7 @@ class UwbAmclInitializer(Node):
         now = time.monotonic()
         self.uwb_poses = {}
         self.uwb_status = {}
+        self.injected_faults = {}
         self.amcl_received_at = {}
         self.validation_states = {}
         self.odometry = {}
@@ -186,6 +189,15 @@ class UwbAmclInitializer(Node):
                 ]
             )
 
+        self.input_subscriptions.append(
+            self.create_subscription(
+                String,
+                "/traffic/simulation_faults",
+                self.on_simulation_faults,
+                10,
+            )
+        )
+
         self.create_timer(0.5, self.update)
         self.get_logger().info(
             f"UWB-assisted AMCL startup/recovery enabled for {len(self.vehicle_names)} "
@@ -203,6 +215,9 @@ class UwbAmclInitializer(Node):
         self.uwb_status[name] = (payload, time.monotonic())
 
     def on_amcl_pose(self, name, message):
+        faults = self.injected_faults.get(name, set())
+        if faults.intersection({"lidar_dropout", "localization_loss"}):
+            return
         now = time.monotonic()
         self.amcl_received_at[name] = now
         if self.phases[name] not in ("initializing", "recovering"):
@@ -228,6 +243,10 @@ class UwbAmclInitializer(Node):
                 f"{'recovery' if recovered else 'UWB startup'} "
                 f"({error:.2f} m agreement)"
             )
+
+    def on_simulation_faults(self, message):
+        """Apply the latest complete simulation fault registry."""
+        self.injected_faults = parse_fault_state(message.data, self.vehicle_names)
 
     def on_validation(self, name, message):
         """Watch the validator's filtered state without fusing UWB into AMCL."""

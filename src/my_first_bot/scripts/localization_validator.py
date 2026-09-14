@@ -16,6 +16,7 @@ from traffic_common import (
     classify_localization_error,
     select_time_aligned_pair,
 )
+from simulation_faults import parse_fault_state
 
 
 class LocalizationValidator(Node):
@@ -84,6 +85,7 @@ class LocalizationValidator(Node):
             name: deque(maxlen=history_size) for name in self.vehicle_names
         }
         self.uwb_status = {}
+        self.injected_faults = {}
         self.stable_states = {name: None for name in self.vehicle_names}
         self.candidate_states = {name: None for name in self.vehicle_names}
         self.candidate_samples = {name: 0 for name in self.vehicle_names}
@@ -105,8 +107,8 @@ class LocalizationValidator(Node):
                 self.create_subscription(
                     PoseWithCovarianceStamped,
                     amcl_topic,
-                    lambda message, name=vehicle_name: self.on_pose(
-                        self.amcl_poses, name, message
+                    lambda message, name=vehicle_name: self.on_amcl_pose(
+                        name, message
                     ),
                     10,
                 )
@@ -139,6 +141,15 @@ class LocalizationValidator(Node):
                 String, f"{topic_root}/localization_validation", 10
             )
 
+        self.input_subscriptions.append(
+            self.create_subscription(
+                String,
+                "/traffic/simulation_faults",
+                self.on_simulation_faults,
+                10,
+            )
+        )
+
         # Re-evaluate every vehicle periodically, even when no new input has
         # arrived, so stale AMCL/UWB data is reported promptly.
         publish_rate = max(0.1, float(self.get_parameter("publish_rate").value))
@@ -163,6 +174,17 @@ class LocalizationValidator(Node):
             "measurement_at": measurement_at if measurement_at > 0.0 else None,
             "received_at": time.monotonic(),
         })
+
+    def on_amcl_pose(self, vehicle_name, message):
+        """Cache AMCL unless a simulation-only localization fault is active."""
+        faults = self.injected_faults.get(vehicle_name, set())
+        if faults.intersection({"lidar_dropout", "localization_loss"}):
+            return
+        self.on_pose(self.amcl_poses, vehicle_name, message)
+
+    def on_simulation_faults(self, message):
+        """Apply the latest complete simulation fault registry."""
+        self.injected_faults = parse_fault_state(message.data, self.vehicle_names)
 
     def on_uwb_status(self, vehicle_name, message):
         # UWB status is JSON on a String topic.  Ignore malformed data rather

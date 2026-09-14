@@ -16,6 +16,15 @@ def make_monitor(database):
     monitor.connection = open_database(database, check_same_thread=False)
     monitor.lock = threading.Lock()
     monitor.validation_status = {}
+    monitor.initialization_status = {}
+    monitor.simulation_faults_enabled = False
+    monitor.simulation_vehicle_names = tuple(
+        f"vehicle_{index}" for index in range(1, 5)
+    )
+    monitor.active_simulation_faults = {}
+    monitor.last_simulation_fault_action = None
+    monitor.fault_state_publisher = None
+    monitor.fault_action_publisher = None
     parameters = {
         "grid_resolution": 0.5,
         "event_resolution": 1.5,
@@ -233,4 +242,42 @@ def test_health_snapshot_distinguishes_online_stale_offline_and_unknown(tmp_path
     assert vehicles["vehicle_4"]["status"] == "unknown"
     assert vehicles["vehicle_4"]["lidar"]["state"] == "unknown"
     assert result["services"]["traffic_recorder"]["status"] == "online"
+    assert result["simulation_faults"]["enabled"] is False
+    monitor.connection.close()
+
+
+def test_simulation_fault_control_is_guarded_and_publishes_full_state(tmp_path):
+    class Publisher:
+        def __init__(self):
+            self.messages = []
+
+        def publish(self, message):
+            self.messages.append(message.data)
+
+    monitor = make_monitor(tmp_path / "traffic.db")
+    try:
+        monitor.set_simulation_fault(
+            {"vehicle_id": "vehicle_1", "fault": "freeze", "enabled": True}
+        )
+    except PermissionError as error:
+        assert "disabled" in str(error)
+    else:
+        raise AssertionError("disabled simulation fault endpoint accepted a command")
+
+    monitor.simulation_faults_enabled = True
+    monitor.fault_state_publisher = Publisher()
+    monitor.fault_action_publisher = Publisher()
+    result = monitor.set_simulation_fault(
+        {"vehicle_id": "vehicle_1", "fault": "freeze", "enabled": True}
+    )
+    assert result["active"] == [
+        {"vehicle_id": "vehicle_1", "faults": ["freeze"]}
+    ]
+    assert '"vehicle_1":["freeze"]' in monitor.fault_state_publisher.messages[-1]
+
+    result = monitor.set_simulation_fault(
+        {"action": "teleport", "vehicle_id": "vehicle_1"}
+    )
+    assert result["last_action"]["status"] == "requested"
+    assert '"action":"teleport"' in monitor.fault_action_publisher.messages[-1]
     monitor.connection.close()

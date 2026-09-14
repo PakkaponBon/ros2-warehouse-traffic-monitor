@@ -54,13 +54,14 @@ install(
     scripts/uwb_simulator.py
     scripts/uwb_amcl_initializer.py
     scripts/localization_validator.py
+    scripts/simulation_fault_injector.py
     scripts/prepare_slam_map.py
     scripts/web_monitor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(
-  FILES scripts/traffic_common.py scripts/grid_planner.py
+  FILES scripts/traffic_common.py scripts/grid_planner.py scripts/simulation_faults.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

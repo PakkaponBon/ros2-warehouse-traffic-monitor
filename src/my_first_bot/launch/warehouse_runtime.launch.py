@@ -54,6 +54,7 @@ def generate_launch_description():
     uwb_problem_samples = LaunchConfiguration("uwb_problem_samples")
     uwb_recovery_samples = LaunchConfiguration("uwb_recovery_samples")
     use_web = LaunchConfiguration("use_web")
+    enable_simulation_faults = LaunchConfiguration("enable_simulation_faults")
     use_rviz = LaunchConfiguration("use_rviz")
     gui = LaunchConfiguration("gui")
     spawn_robot = LaunchConfiguration("spawn_robot")
@@ -118,6 +119,11 @@ def generate_launch_description():
             DeclareLaunchArgument("uwb_problem_samples", default_value="3"),
             DeclareLaunchArgument("uwb_recovery_samples", default_value="3"),
             DeclareLaunchArgument("use_web", default_value="true"),
+            DeclareLaunchArgument(
+                "enable_simulation_faults",
+                default_value="true",
+                description="Enable Gazebo-only fault controls in the health page",
+            ),
             # Keep Gazebo's system resources while also exposing this package's
             # bundled warehouse meshes referenced by newwarehouse.world.
             SetEnvironmentVariable(
@@ -276,6 +282,19 @@ def generate_launch_description():
             ),
             Node(
                 package="my_first_bot",
+                executable="simulation_fault_injector.py",
+                name="simulation_fault_injector",
+                parameters=[
+                    {
+                        "use_sim_time": True,
+                        "vehicle_count": vehicle_count,
+                    }
+                ],
+                condition=IfCondition(enable_simulation_faults),
+                output="screen",
+            ),
+            Node(
+                package="my_first_bot",
                 executable="traffic_heatmap.py",
                 name="traffic_heatmap",
                 parameters=[{"database_path": database, "use_sim_time": True}],
@@ -296,6 +315,7 @@ def generate_launch_description():
                         "map_image": map_image,
                         "uwb_tag_config": uwb_tag_config,
                         "traffic_vehicle_count": vehicle_count,
+                        "enable_simulation_faults": enable_simulation_faults,
                     }
                 ],
                 condition=IfCondition(use_web),

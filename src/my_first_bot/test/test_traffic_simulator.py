@@ -6,6 +6,11 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
 from traffic_simulator import TrafficSimulator, readiness_allows_drive  # noqa: E402
 from spawn_localized_vehicle import render_model  # noqa: E402
+from simulation_faults import (  # noqa: E402
+    parse_fault_state,
+    validate_fault_request,
+    vehicle_names,
+)
 from uwb_amcl_initializer import (  # noqa: E402
     localization_loss_reason,
     localization_topics,
@@ -93,3 +98,40 @@ def test_recovery_requires_fresh_stopped_odometry():
     assert not odometry_is_stopped((0.2, 0.02, 99.8), now, 1.0, 0.03, 0.08)
     assert not odometry_is_stopped((0.01, 0.2, 99.8), now, 1.0, 0.03, 0.08)
     assert not odometry_is_stopped((0.0, 0.0, 95.0), now, 1.0, 0.03, 0.08)
+
+
+def test_simulation_fault_requests_are_bounded_and_vehicle_scoped():
+    allowed = vehicle_names(2)
+    assert validate_fault_request(
+        {
+            "vehicle_id": "vehicle_2",
+            "fault": "uwb_dropout",
+            "enabled": True,
+        },
+        allowed,
+    ) == {
+        "action": "set",
+        "vehicle_id": "vehicle_2",
+        "fault": "uwb_dropout",
+        "enabled": True,
+    }
+    assert validate_fault_request(
+        {"action": "teleport", "vehicle_id": "vehicle_1"}, allowed
+    )["offset_x"] == 6.0
+    try:
+        validate_fault_request(
+            {"vehicle_id": "vehicle_9", "fault": "freeze", "enabled": True},
+            allowed,
+        )
+    except ValueError as error:
+        assert "configured" in str(error)
+    else:
+        raise AssertionError("unconfigured vehicle fault was accepted")
+
+
+def test_fault_state_parser_ignores_unknown_faults_and_vehicles():
+    state = parse_fault_state(
+        '{"active":{"vehicle_1":["freeze","unknown"],"vehicle_9":["freeze"]}}',
+        vehicle_names(2),
+    )
+    assert state == {"vehicle_1": {"freeze"}}

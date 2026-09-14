@@ -15,34 +15,20 @@ function formatTimeWindow(start, end) {
 export function heatTooltipLabel(value, metric = 'count') {
   const metricValue = Number(value[metric] || 0);
   const description = metric === 'vehicles'
-    ? `${metricValue} unique vehicle(s)`
+    ? `${metricValue} unique vehicles`
     : metric === 'slow_samples'
-      ? `${metricValue} slow sample(s)`
-      : `${metricValue} occupancy sample(s)`;
+      ? `${metricValue} slow samples`
+      : `${metricValue} position samples`;
   const lines = [
-    `Heat cell · x ${Number(value.x).toFixed(2)}, y ${Number(value.y).toFixed(2)}`,
-    `${description} · average ${Number(value.average_speed || 0).toFixed(2)} m/s`,
+    `Area x ${Number(value.x).toFixed(1)}, y ${Number(value.y).toFixed(1)}`,
+    `${description} · average speed ${Number(value.average_speed || 0).toFixed(2)} m/s`,
   ];
   const peak = value.time_details?.peaks?.[metric];
   if (peak) {
     lines.push(`Busiest: ${formatTimeWindow(peak.start, peak.end)}`);
-    lines.push(`At peak: ${peak.count} samples · ${peak.vehicles} vehicle(s) · ${peak.slow_samples} slow`);
     if (peak.vehicle_ids?.length) lines.push(`Vehicles: ${peak.vehicle_ids.join(', ')}`);
-    const slowDetails = (peak.slow_vehicle_states || []).map((vehicle) => (
-      `${vehicle.vehicle_id} (${vehicle.states.map((state) => state.replaceAll('_', ' ')).join('/')})`
-    ));
-    lines.push(`Slow/problem: ${slowDetails.length ? slowDetails.join(', ') : 'none'}`);
-    const slowIds = new Set(peak.slow_vehicle_ids || []);
-    const normalIds = (peak.vehicle_ids || []).filter((vehicleId) => !slowIds.has(vehicleId));
-    lines.push(`Normal: ${normalIds.length ? normalIds.join(', ') : 'none'}`);
   }
-  const stuck = value.time_details?.stuck;
-  if (stuck?.events) {
-    lines.push(`Confirmed stuck: ${stuck.events} event(s) · ${stuck.vehicles} vehicle(s)`);
-    if (stuck.peak) lines.push(`Most stuck: ${formatTimeWindow(stuck.peak.start, stuck.peak.end)}`);
-  } else {
-    lines.push('Confirmed stuck: none in this range');
-  }
+  lines.push('Click for full details');
   return lines.join('\n');
 }
 
@@ -58,8 +44,10 @@ export class WarehouseMap {
     this.lastData = null;
     this.lastOptions = null;
     this.rotated = false;
+    this.onHeatSelect = null;
     this.tooltip = document.querySelector('#mapTooltip');
     canvas.addEventListener('mousemove', (event) => this.showTooltip(event));
+    canvas.addEventListener('click', (event) => this.selectHeat(event));
     canvas.addEventListener('mouseleave', () => { this.tooltip.style.display = 'none'; });
   }
 
@@ -165,6 +153,8 @@ export class WarehouseMap {
         radius,
         priority: 0,
         label: heatTooltipLabel(value, metric),
+        heatValue: value,
+        heatMetric: metric,
       });
     });
   }
@@ -377,11 +367,19 @@ export class WarehouseMap {
     if (this.lastData && this.lastOptions) this.draw(this.lastData, this.lastOptions);
   }
 
+  setHeatSelectionHandler(handler) {
+    this.onHeatSelect = typeof handler === 'function' ? handler : null;
+  }
+
   drawFocus() {
     if (!this.focused || !Number.isFinite(Number(this.focused.x)) || !Number.isFinite(Number(this.focused.y))) return;
     const { x, y } = this.project(Number(this.focused.x), Number(this.focused.y));
-    const color = this.focused.type === 'Congestion' ? '#ff5263' : '#ffbf47';
-    const label = `${this.focused.type} · ${this.focused.events} event(s)`;
+    const color = this.focused.type === 'Congestion'
+      ? '#ff5263'
+      : this.focused.type === 'Heat area' ? '#3da4ff' : '#ffbf47';
+    const label = this.focused.type === 'Heat area'
+      ? 'Selected heat area'
+      : `${this.focused.type} · ${this.focused.events} event(s)`;
     this.ctx.save();
     this.ctx.strokeStyle = color;
     this.ctx.lineWidth = 3;
@@ -419,17 +417,29 @@ export class WarehouseMap {
     this.hits.push({ x, y, radius: 34, priority: 4, label: `${label} · x ${Number(point.x).toFixed(2)}, y ${Number(point.y).toFixed(2)}` });
   }
 
-  showTooltip(event) {
+  hitAt(event, heatOnly = false) {
     const box = this.canvas.getBoundingClientRect();
     const x = (event.clientX - box.left) * this.canvas.width / box.width;
     const y = (event.clientY - box.top) * this.canvas.height / box.height;
-    const hit = this.hits
+    return this.hits
+      .filter((item) => !heatOnly || item.heatValue)
       .map((item) => ({ ...item, distance: Math.hypot(item.x - x, item.y - y) }))
       .filter((item) => item.distance <= item.radius)
       .sort((first, second) => (
         Number(second.priority || 0) - Number(first.priority || 0)
         || first.distance - second.distance
       ))[0];
+  }
+
+  selectHeat(event) {
+    const hit = this.hitAt(event, true);
+    if (!hit || !this.onHeatSelect) return;
+    this.onHeatSelect(hit.heatValue, hit.heatMetric);
+    this.tooltip.style.display = 'none';
+  }
+
+  showTooltip(event) {
+    const hit = this.hitAt(event);
     if (!hit) { this.tooltip.style.display = 'none'; return; }
     this.tooltip.textContent = hit.label; this.tooltip.style.display = 'block';
     const wrapper = this.canvas.parentElement;

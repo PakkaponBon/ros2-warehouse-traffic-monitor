@@ -39,6 +39,7 @@ def generate_launch_description():
     randomize_starts = LaunchConfiguration("randomize_starts")
     spawn_seed = LaunchConfiguration("spawn_seed")
     use_uwb_startup = LaunchConfiguration("use_uwb_startup")
+    enable_simulation_faults = LaunchConfiguration("enable_simulation_faults")
     traffic_model = (
         package_share / "models" / "traffic_vehicle" / "localized_vehicle.sdf.in"
     )
@@ -239,6 +240,11 @@ def generate_launch_description():
                     "Enable stopped-only UWB-assisted AMCL startup and recovery"
                 ),
             ),
+            DeclareLaunchArgument(
+                "enable_simulation_faults",
+                default_value="true",
+                description="Enable Gazebo-only fault controls in the health page",
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(str(warehouse_runtime)),
                 launch_arguments={
@@ -266,6 +272,7 @@ def generate_launch_description():
                     "uwb_validation_hysteresis": uwb_validation_hysteresis,
                     "uwb_problem_samples": uwb_problem_samples,
                     "uwb_recovery_samples": uwb_recovery_samples,
+                    "enable_simulation_faults": enable_simulation_faults,
                 }.items(),
             ),
             Node(

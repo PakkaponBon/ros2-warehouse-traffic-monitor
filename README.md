@@ -60,13 +60,24 @@ The default launch starts eight vehicles at safe randomized positions, loads
 the saved SLAM map, enables AMCL/UWB validation, records traffic, and serves the
 dashboard at <http://127.0.0.1:8080>.
 
-The read-only system-health page is available at
+The system-health page is available at
 <http://127.0.0.1:8080/health.html>. It reports web/database availability,
 recorder freshness, and the latest telemetry, localization, UWB, and LiDAR
 diagnostic state for each configured vehicle. A vehicle is online when its
 latest position is under five seconds old, stale from five through fifteen
 seconds, and offline after fifteen seconds. Sensors without a dedicated
 diagnostic heartbeat are shown as unknown rather than assumed healthy.
+
+In Gazebo launches, the same page includes a clearly marked simulation-only
+fault panel. It can freeze a vehicle, drop synthetic LiDAR or UWB input, force
+localization loss, teleport a vehicle by a bounded offset, restore its saved
+pose, and clear persistent faults. These controls exercise the real monitoring,
+stuck-detection, interlock, and recovery paths but never publish to a real
+forklift interface. Disable the panel when it is not needed:
+
+```bash
+ros2 launch my_first_bot real_warehouse.launch.py enable_simulation_faults:=false
+```
 
 Useful overrides:
 

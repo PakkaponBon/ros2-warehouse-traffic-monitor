@@ -169,6 +169,51 @@ export function renderAnalytics(root, analytics) {
     </div>`;
 }
 
+export function renderHeatAreaSummary(root, value, metric = 'count') {
+  if (!value) {
+    root.innerHTML = '<div class="empty">Click a colored heat spot on the map to see its detailed summary.</div>';
+    return;
+  }
+  const labels = {
+    count: ['Position samples', 'samples'],
+    vehicles: ['Unique vehicles', 'vehicles'],
+    slow_samples: ['Slow samples', 'slow samples'],
+  };
+  const [metricLabel, metricUnit] = labels[metric] || labels.count;
+  const peak = value.time_details?.peaks?.[metric];
+  const stuck = value.time_details?.stuck;
+  const formatWindow = (window) => window
+    ? `${new Date(window.start * 1000).toLocaleString()} → ${new Date(window.end * 1000).toLocaleString()}`
+    : 'No peak time available';
+  const peakVehicles = peak?.vehicle_ids || [];
+  const slowVehicles = (peak?.slow_vehicle_states || []).map((vehicle) => (
+    `${escapeHtml(vehicle.vehicle_id)} (${vehicle.states.map((state) => escapeHtml(state.replaceAll('_', ' '))).join(', ')})`
+  ));
+  const slowIds = new Set(peak?.slow_vehicle_ids || []);
+  const normalVehicles = peakVehicles.filter((vehicleId) => !slowIds.has(vehicleId));
+  const peakValue = Number(peak?.[metric] || 0);
+  const stuckText = stuck?.events
+    ? `${stuck.events} event(s), ${stuck.vehicles} vehicle(s)${stuck.peak ? ` · busiest ${formatWindow(stuck.peak)}` : ''}`
+    : 'None in this selected time range';
+
+  root.innerHTML = `<div class="heat-area-summary">
+    <div class="heat-area-location"><b>Map area</b><span>x ${Number(value.x).toFixed(1)} m · y ${Number(value.y).toFixed(1)} m</span></div>
+    <div class="heat-area-grid">
+      <div><small>${metricLabel}</small><strong>${Number(value[metric] || 0)}</strong><span>whole selected range</span></div>
+      <div><small>Average speed</small><strong>${Number(value.average_speed || 0).toFixed(2)} m/s</strong><span>in this area</span></div>
+      <div><small>Busiest period</small><strong>${peakValue}</strong><span>${metricUnit}</span></div>
+      <div><small>Slow at busiest time</small><strong>${Number(peak?.slow_samples || 0)}</strong><span>samples</span></div>
+    </div>
+    <dl class="heat-area-details">
+      <div><dt>Busiest time</dt><dd>${formatWindow(peak)}</dd></div>
+      <div><dt>Vehicles there</dt><dd>${peakVehicles.length ? peakVehicles.map(escapeHtml).join(', ') : 'None recorded'}</dd></div>
+      <div><dt>Slow or waiting</dt><dd>${slowVehicles.length ? slowVehicles.join(', ') : 'None recorded'}</dd></div>
+      <div><dt>Moving normally</dt><dd>${normalVehicles.length ? normalVehicles.map(escapeHtml).join(', ') : 'None recorded'}</dd></div>
+      <div><dt>Confirmed stuck</dt><dd>${stuckText}</dd></div>
+    </dl>
+  </div>`;
+}
+
 export function renderHotspots(root, data) {
   const events = [
     ...data.congestion.map((value) => ({ ...value, type: 'Congestion', color: 'var(--red)' })),

@@ -7,6 +7,7 @@ import {
 } from './api.js';
 import {
   renderAnalytics,
+  renderHeatAreaSummary,
   renderHotspots,
   renderLocalization,
   renderMetrics,
@@ -121,7 +122,7 @@ app.innerHTML = `
         <div class="panel-head">
           <div>
             <h2>Warehouse traffic map</h2>
-            <span class="sub">Landscape display · positions remain in the ROS map frame</span>
+            <span class="sub">Hover for a quick answer · click heat for the full area summary</span>
           </div>
 
           <div class="map-tools">
@@ -189,7 +190,7 @@ app.innerHTML = `
         </div>
       </section>
 
-      <section class="panel route-panel">
+      <section class="panel route-panel" hidden aria-hidden="true">
         <div class="panel-head">
           <div>
             <h2>Route suggestions</h2>
@@ -240,6 +241,19 @@ app.innerHTML = `
           <div id="routeResult" class="route-result">
             <div class="empty">Choose a forklift and click a destination on the route map.</div>
           </div>
+        </div>
+      </section>
+
+      <section class="panel area-summary-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Selected area summary</h2>
+            <span class="sub">Click a colored heat spot on the traffic map for its complete breakdown</span>
+          </div>
+          <span class="tag">HEAT DETAILS</span>
+        </div>
+        <div id="heatAreaSummary">
+          <div class="empty">Click a colored heat spot on the map to see its detailed summary.</div>
         </div>
       </section>
       </div>
@@ -327,6 +341,7 @@ const state = {
   lastTick: 0,
   debounce: null,
   selectedHotspot: null,
+  selectedHeat: null,
   selectedVehicle: null,
   route: null,
   routeLoading: false,
@@ -410,6 +425,23 @@ function render(data) {
     if (selected) selected.classList.add('selected');
   }
   renderAnalytics($('#analytics'), data.analytics);
+  if (state.selectedHeat) {
+    const selectedValue = data.density.find((value) => (
+      Math.abs(Number(value.x) - Number(state.selectedHeat.value.x)) < 0.001
+      && Math.abs(Number(value.y) - Number(state.selectedHeat.value.y)) < 0.001
+    ));
+    if (selectedValue) {
+      state.selectedHeat.value = selectedValue;
+      renderHeatAreaSummary(
+        $('#heatAreaSummary'),
+        selectedValue,
+        state.selectedHeat.metric,
+      );
+    } else {
+      state.selectedHeat = null;
+      renderHeatAreaSummary($('#heatAreaSummary'), null);
+    }
+  }
   renderHotspots($('#hotspots'), data);
   renderStuckTimeline($('#stuckTimeline'), data.stuck_timeline);
   updateRouteVehicles(data.latest);
@@ -428,6 +460,32 @@ function render(data) {
 
   redraw();
 }
+
+function clearHeatSelection() {
+  state.selectedHeat = null;
+  renderHeatAreaSummary($('#heatAreaSummary'), null);
+}
+
+map.setHeatSelectionHandler((value, metric) => {
+  state.selectedHeat = { value, metric };
+  state.selectedVehicle = null;
+  state.selectedHotspot = null;
+  document.querySelectorAll('#summaryRows [data-vehicle]').forEach((item) => item.classList.remove('selected'));
+  document.querySelectorAll('#hotspots [data-hotspot]').forEach((item) => item.classList.remove('selected'));
+  $('#pathLayer').checked = false;
+  renderHeatAreaSummary($('#heatAreaSummary'), value, metric);
+  map.focusAt({
+    x: Number(value.x),
+    y: Number(value.y),
+    type: 'Heat area',
+    events: Number(value[metric] || 0),
+  });
+  const peak = value.time_details?.peaks?.[metric];
+  const peakText = peak
+    ? ` · busiest ${new Date(peak.start * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : '';
+  $('#mapFocus').textContent = `Selected heat area · x ${Number(value.x).toFixed(1)} · y ${Number(value.y).toFixed(1)}${peakText}`;
+});
 
 function updateRouteVehicles(vehicles) {
   const select = $('#routeVehicle');
@@ -598,6 +656,7 @@ $('#applyRange').addEventListener('click', applyRange);
 $('#stateFilter').addEventListener('change', redraw);
 
 function selectVehicle(card) {
+  clearHeatSelection();
   state.selectedVehicle = card.dataset.vehicle;
   state.selectedHotspot = null;
   document.querySelectorAll('#summaryRows [data-vehicle]').forEach((item) => {
@@ -634,6 +693,7 @@ $('#hotspots').addEventListener('click', (event) => {
   const row = event.target.closest('[data-hotspot]');
   if (!row) return;
 
+  clearHeatSelection();
   state.selectedVehicle = null;
   $('#pathLayer').checked = false;
   document.querySelectorAll('#summaryRows [data-vehicle]').forEach((item) => item.classList.remove('selected'));
@@ -662,6 +722,7 @@ $('#stuckTimeline').addEventListener('click', (event) => {
   const row = event.target.closest('[data-stuck-time]');
   if (!row) return;
 
+  clearHeatSelection();
   state.selectedVehicle = null;
   $('#pathLayer').checked = false;
   document.querySelectorAll('#summaryRows [data-vehicle]').forEach((item) => item.classList.remove('selected'));
@@ -681,6 +742,7 @@ $('#stuckTimeline').addEventListener('click', (event) => {
 });
 
 function selectInsight(row) {
+  clearHeatSelection();
   if (row.dataset.insight === 'stuck') {
     state.selectedVehicle = null;
     $('#pathLayer').checked = false;
@@ -734,6 +796,16 @@ $('#analytics').addEventListener('keydown', (event) => {
   'heatMetric',
   'heatFilter',
 ].forEach((id) => $(`#${id}`).addEventListener('input', redraw));
+
+$('#heatMetric').addEventListener('change', () => {
+  if (!state.selectedHeat) return;
+  state.selectedHeat.metric = $('#heatMetric').value;
+  renderHeatAreaSummary(
+    $('#heatAreaSummary'),
+    state.selectedHeat.value,
+    state.selectedHeat.metric,
+  );
+});
 
 $('#trailMinutes').addEventListener('change', () => (
   state.auto ? goLive() : state.cursor !== null && loadFrame(state.cursor)

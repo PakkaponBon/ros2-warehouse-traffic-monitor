@@ -1,5 +1,5 @@
 import './styles.css';
-import { getHealth } from './api.js';
+import { getHealth, setSimulationFault } from './api.js';
 
 const app = document.querySelector('#app');
 
@@ -23,13 +23,34 @@ app.innerHTML = `
       </div>
       <div id="thresholds" class="health-thresholds">Loading thresholds…</div>
     </section>
+    <section id="faultPanel" class="panel fault-panel" hidden>
+      <div class="panel-head">
+        <div><h2>Simulation fault injection</h2><span class="sub">Exercise monitoring and recovery without changing real forklift interfaces</span></div>
+        <span class="tag fault-warning">GAZEBO ONLY</span>
+      </div>
+      <div class="fault-controls">
+        <label class="field"><span>Forklift</span><select id="faultVehicle"></select></label>
+        <div class="fault-buttons" aria-label="Persistent simulation faults">
+          <button type="button" class="secondary fault-toggle" data-fault="freeze">Freeze drivetrain</button>
+          <button type="button" class="secondary fault-toggle" data-fault="lidar_dropout">Drop LiDAR</button>
+          <button type="button" class="secondary fault-toggle" data-fault="uwb_dropout">Drop UWB</button>
+          <button type="button" class="secondary fault-toggle" data-fault="localization_loss">Lose localization</button>
+        </div>
+        <div class="fault-buttons" aria-label="One-shot simulation actions">
+          <button type="button" data-action="teleport">Teleport +6 m</button>
+          <button type="button" class="secondary" data-action="restore">Restore pose</button>
+          <button type="button" class="fault-clear" data-action="clear_all">Clear faults</button>
+        </div>
+      </div>
+      <div class="fault-status"><span id="activeFaults">No active faults</span><span id="faultResult">Ready</span></div>
+    </section>
     <section id="healthMetrics" class="metrics health-metrics"></section>
     <section class="panel health-services-panel">
       <div class="panel-head"><div><h2>Services</h2><span class="sub">API, database, and recorder status</span></div><span id="version" class="tag">VERSION —</span></div>
       <div id="services" class="health-services"><div class="empty">Waiting for service health…</div></div>
     </section>
     <section class="panel health-vehicles-panel">
-      <div class="panel-head"><div><h2>Forklifts</h2><span class="sub">Position telemetry, localization, UWB, and sensor diagnostics</span></div><span class="tag">READ ONLY</span></div>
+      <div class="panel-head"><div><h2>Forklifts</h2><span class="sub">Position telemetry, localization, UWB, and sensor diagnostics</span></div><span class="tag">MONITORING</span></div>
       <div id="vehicles" class="health-vehicles"><div class="empty">Waiting for vehicle health…</div></div>
     </section>
   </main>
@@ -56,6 +77,49 @@ const badge = (status) => `<span class="health-badge ${escapeHtml(status || 'unk
 const valueOrUnknown = (value, suffix = '') => (
   Number.isFinite(value) ? `${value.toFixed(2)}${suffix}` : 'Unknown'
 );
+
+const faultLabels = {
+  freeze: 'drivetrain frozen',
+  lidar_dropout: 'LiDAR dropped',
+  uwb_dropout: 'UWB dropped',
+  localization_loss: 'localization lost',
+};
+let latestPayload = null;
+let faultBusy = false;
+
+function faultsFor(state, vehicleId) {
+  const entry = state?.active?.find((item) => item.vehicle_id === vehicleId);
+  return new Set(entry?.faults || []);
+}
+
+function renderFaultControls(state, vehicles) {
+  const panel = $('#faultPanel');
+  panel.hidden = !state?.enabled;
+  if (!state?.enabled) return;
+  const select = $('#faultVehicle');
+  const ids = vehicles.map((vehicle) => vehicle.vehicle_id).filter((id) => id.startsWith('vehicle_'));
+  const previous = select.value;
+  const signature = ids.join('|');
+  if (select.dataset.vehicles !== signature) {
+    select.innerHTML = ids.map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(id)}</option>`).join('');
+    select.dataset.vehicles = signature;
+    if (ids.includes(previous)) select.value = previous;
+  }
+  const selected = select.value || ids[0];
+  const active = faultsFor(state, selected);
+  document.querySelectorAll('.fault-toggle').forEach((button) => {
+    const enabled = active.has(button.dataset.fault);
+    button.classList.toggle('active', enabled);
+    button.setAttribute('aria-pressed', String(enabled));
+  });
+  $('#activeFaults').textContent = active.size
+    ? `${selected}: ${[...active].map((fault) => faultLabels[fault] || fault).join(', ')}`
+    : `${selected || 'No vehicle'}: no active faults`;
+  const last = state.last_action;
+  $('#faultResult').textContent = last
+    ? `${statusLabel(last.action)} ${last.vehicle_id || ''}: ${statusLabel(last.status)}${last.detail ? ` · ${last.detail}` : ''}`
+    : 'Ready';
+}
 
 function renderServices(services) {
   const database = services.database || {};
@@ -101,13 +165,14 @@ function renderVehicles(vehicles) {
     const localization = vehicle.localization || {};
     const uwb = vehicle.uwb || {};
     const lidar = vehicle.lidar || {};
+    const injected = vehicle.injected_faults || [];
     const uwbDisplayState = uwb.freshness === 'online'
       ? uwb.state
       : uwb.freshness || 'unknown';
     return `
       <article class="health-vehicle ${escapeHtml(vehicle.status)}">
         <div class="health-vehicle-head">
-          <div><strong>${escapeHtml(vehicle.vehicle_id)}</strong><small>${position}</small></div>
+          <div><strong>${escapeHtml(vehicle.vehicle_id)}</strong><small>${position}</small>${injected.length ? `<small class="injected-fault">Injected: ${escapeHtml(injected.map((fault) => faultLabels[fault] || fault).join(', '))}</small>` : ''}</div>
           ${badge(vehicle.status)}
         </div>
         <div class="health-detail-grid">
@@ -133,9 +198,49 @@ function render(payload) {
   ].map(([name, value, label, color]) => `<article class="metric ${color}" data-status="${name}"><strong>${value}</strong><span>${label}</span></article>`).join('');
   $('#thresholds').textContent = `Online < ${payload.thresholds.online_under_seconds}s · stale to ${payload.thresholds.offline_over_seconds}s · then offline`;
   $('#version').textContent = `VERSION ${payload.software_version}`;
+  renderFaultControls(payload.simulation_faults, payload.vehicles);
   renderServices(payload.services);
   renderVehicles(payload.vehicles);
 }
+
+async function applyFault(request) {
+  if (faultBusy) return;
+  faultBusy = true;
+  document.querySelectorAll('#faultPanel button').forEach((button) => { button.disabled = true; });
+  $('#faultResult').textContent = 'Applying simulation fault…';
+  try {
+    const state = await setSimulationFault(request);
+    if (latestPayload) latestPayload.simulation_faults = state;
+    renderFaultControls(state, latestPayload?.vehicles || []);
+    await refresh();
+  } catch (error) {
+    $('#faultResult').textContent = `Failed: ${error.message}`;
+  } finally {
+    faultBusy = false;
+    document.querySelectorAll('#faultPanel button').forEach((button) => { button.disabled = false; });
+  }
+}
+
+$('#faultVehicle').addEventListener('change', () => {
+  renderFaultControls(latestPayload?.simulation_faults, latestPayload?.vehicles || []);
+});
+$('#faultPanel').addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  const vehicleId = $('#faultVehicle').value;
+  if (!vehicleId) return;
+  if (button.dataset.fault) {
+    const active = faultsFor(latestPayload?.simulation_faults, vehicleId);
+    applyFault({
+      action: 'set',
+      vehicle_id: vehicleId,
+      fault: button.dataset.fault,
+      enabled: !active.has(button.dataset.fault),
+    });
+  } else if (button.dataset.action) {
+    applyFault({ action: button.dataset.action, vehicle_id: vehicleId });
+  }
+});
 
 let loading = false;
 async function refresh() {
@@ -143,6 +248,7 @@ async function refresh() {
   loading = true;
   try {
     const payload = await getHealth();
+    latestPayload = payload;
     render(payload);
     $('#connection').className = 'connection';
     $('#connection span').textContent = `Updated ${new Date(payload.generated_at).toLocaleTimeString()}`;

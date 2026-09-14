@@ -26,6 +26,17 @@ export async function getHealth() {
   }
   return health;
 }
+export async function setSimulationFault(faultRequest) {
+  const state = await request('/api/simulation/faults', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(faultRequest),
+  });
+  if (!state.simulation_only || !Array.isArray(state.active)) {
+    throw new Error('Simulation fault control unavailable');
+  }
+  return state;
+}
 export async function getState(query) {
   const state = await request(`/api/state?${new URLSearchParams(query)}`);
   if (!Array.isArray(state.latest) || !Array.isArray(state.density)) {

@@ -21,6 +21,7 @@ from std_msgs.msg import String
 import yaml
 
 from grid_planner import OccupancyGridPlanner
+from simulation_faults import validate_fault_request, vehicle_names
 from traffic_common import (
     iso_time,
     motion_state_is_problem,
@@ -139,7 +140,7 @@ class MonitorHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path != "/api/routes/suggest":
+        if parsed.path not in {"/api/routes/suggest", "/api/simulation/faults"}:
             self._send(404, "application/json", b'{"error":"not found"}')
             return
         try:
@@ -147,8 +148,13 @@ class MonitorHandler(BaseHTTPRequestHandler):
             if length <= 0 or length > 65536:
                 raise ValueError("request body must be between 1 byte and 64 KiB")
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            result = self.monitor.suggest_route(payload)
+            if parsed.path == "/api/routes/suggest":
+                result = self.monitor.suggest_route(payload)
+            else:
+                result = self.monitor.set_simulation_fault(payload)
             self._send(200, "application/json", json.dumps(result).encode())
+        except PermissionError as error:
+            self._send(403, "application/json", json.dumps({"error": str(error)}).encode())
         except (json.JSONDecodeError, TypeError, ValueError) as error:
             self._send(400, "application/json", json.dumps({"error": str(error)}).encode())
         except Exception as error:
@@ -186,6 +192,7 @@ class WebMonitor(Node):
         self.declare_parameter("health_online_after", 5.0)
         self.declare_parameter("health_offline_after", 15.0)
         self.declare_parameter("software_version", "0.0.0")
+        self.declare_parameter("enable_simulation_faults", False)
         self.declare_parameter("web_root", "")
         self.declare_parameter("route_planning_resolution", 0.30)
         self.declare_parameter("route_robot_radius", 0.55)
@@ -200,6 +207,16 @@ class WebMonitor(Node):
         self.lock = threading.Lock()
         self.validation_status = {}
         self.initialization_status = {}
+        self.simulation_faults_enabled = bool(
+            self.get_parameter("enable_simulation_faults").value
+        )
+        self.simulation_vehicle_names = vehicle_names(
+            int(self.get_parameter("traffic_vehicle_count").value)
+        )
+        self.active_simulation_faults = {}
+        self.last_simulation_fault_action = None
+        self.fault_state_publisher = None
+        self.fault_action_publisher = None
         self.validation_subscriptions = []
         validation_vehicles = ["my_robot"] + [
             f"vehicle_{index}"
@@ -228,6 +245,22 @@ class WebMonitor(Node):
                     10,
                 )
             )
+        if self.simulation_faults_enabled:
+            self.fault_state_publisher = self.create_publisher(
+                String, "/traffic/simulation_faults", 10
+            )
+            self.fault_action_publisher = self.create_publisher(
+                String, "/traffic/simulation_fault_action", 10
+            )
+            self.validation_subscriptions.append(
+                self.create_subscription(
+                    String,
+                    "/traffic/simulation_fault_status",
+                    self._on_fault_status,
+                    10,
+                )
+            )
+            self.create_timer(1.0, self._publish_fault_state)
         MonitorHandler.monitor = self
         self.server = ThreadingHTTPServer(
             (
@@ -360,6 +393,94 @@ class WebMonitor(Node):
         payload["received_at"] = time.monotonic()
         with self.lock:
             self.initialization_status[vehicle_name] = payload
+
+    def _fault_snapshot(self):
+        """Return the guarded simulation fault state for the health UI."""
+        with self.lock:
+            active = [
+                {"vehicle_id": name, "faults": sorted(faults)}
+                for name, faults in sorted(self.active_simulation_faults.items())
+                if faults
+            ]
+            last_action = (
+                None
+                if self.last_simulation_fault_action is None
+                else dict(self.last_simulation_fault_action)
+            )
+        return {
+            "enabled": self.simulation_faults_enabled,
+            "simulation_only": True,
+            "active": active,
+            "last_action": last_action,
+        }
+
+    def _publish_fault_state(self):
+        """Republish the complete registry so late simulator nodes converge."""
+        if not self.simulation_faults_enabled or self.fault_state_publisher is None:
+            return
+        snapshot = self._fault_snapshot()
+        active = {
+            item["vehicle_id"]: item["faults"] for item in snapshot["active"]
+        }
+        self.fault_state_publisher.publish(
+            String(data=json.dumps({"active": active}, separators=(",", ":")))
+        )
+
+    def _on_fault_status(self, message):
+        """Cache the most recent Gazebo one-shot action result."""
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(payload, dict):
+            return
+        with self.lock:
+            self.last_simulation_fault_action = payload
+
+    def set_simulation_fault(self, payload):
+        """Apply a validated simulation-only persistent fault or Gazebo action."""
+        if not self.simulation_faults_enabled:
+            raise PermissionError("simulation fault injection is disabled")
+        request = validate_fault_request(payload, self.simulation_vehicle_names)
+        action = request["action"]
+        name = request["vehicle_id"]
+        if action == "set":
+            with self.lock:
+                faults = self.active_simulation_faults.setdefault(name, set())
+                if request["enabled"]:
+                    faults.add(request["fault"])
+                else:
+                    faults.discard(request["fault"])
+                if not faults:
+                    self.active_simulation_faults.pop(name, None)
+                self.last_simulation_fault_action = {
+                    **request,
+                    "status": "applied",
+                    "observed_at": time.time(),
+                }
+            self._publish_fault_state()
+        elif action == "clear_all":
+            with self.lock:
+                self.active_simulation_faults.pop(name, None)
+                self.last_simulation_fault_action = {
+                    **request,
+                    "status": "applied",
+                    "observed_at": time.time(),
+                }
+            self._publish_fault_state()
+        else:
+            if self.fault_action_publisher is None:
+                raise RuntimeError("simulation action publisher is unavailable")
+            with self.lock:
+                self.last_simulation_fault_action = {
+                    **request,
+                    "status": "requested",
+                    "observed_at": time.time(),
+                }
+            self.fault_action_publisher.publish(
+                String(data=json.dumps(request, separators=(",", ":")))
+            )
+        return self._fault_snapshot()
 
     def _validation_snapshot(self):
         """Return fresh diagnostics and summary counts; these are live only."""
@@ -1407,6 +1528,11 @@ class WebMonitor(Node):
             }
             for row in validation_rows
         }
+        fault_snapshot = self._fault_snapshot()
+        faults_by_vehicle = {
+            item["vehicle_id"]: set(item["faults"])
+            for item in fault_snapshot["active"]
+        }
 
         latest_by_vehicle = {row[0]: row for row in sample_rows}
         expected_ids = {
@@ -1423,6 +1549,7 @@ class WebMonitor(Node):
         )
         vehicles = []
         for vehicle_id in vehicle_ids:
+            injected_faults = faults_by_vehicle.get(vehicle_id, set())
             row = latest_by_vehicle.get(vehicle_id)
             observed_at = None if row is None else float(row[1])
             status, age = freshness(observed_at)
@@ -1438,7 +1565,22 @@ class WebMonitor(Node):
                     "age_seconds": uwb_age,
                 }
 
-            if motion_state == "sensor_wait":
+            if "uwb_dropout" in injected_faults:
+                uwb = {
+                    "state": "unavailable",
+                    "freshness": "offline",
+                    "age_seconds": None,
+                    "error_m": None,
+                    "visible_tag_count": 0,
+                    "reason": "injected_dropout",
+                }
+
+            if "lidar_dropout" in injected_faults:
+                lidar = {
+                    "state": "unavailable",
+                    "detail": "Simulation fault: LiDAR data dropped",
+                }
+            elif motion_state == "sensor_wait":
                 lidar = {
                     "state": "unavailable",
                     "detail": "Vehicle reports that it is waiting for LiDAR",
@@ -1449,7 +1591,9 @@ class WebMonitor(Node):
                     "detail": "Dedicated LiDAR heartbeat is not configured",
                 }
 
-            if source and str(source).startswith("amcl"):
+            if injected_faults.intersection({"lidar_dropout", "localization_loss"}):
+                localization_state = "unavailable"
+            elif source and str(source).startswith("amcl"):
                 localization_state = status
             elif motion_state in {"localizing", "sensor_wait"}:
                 localization_state = "unavailable"
@@ -1469,6 +1613,7 @@ class WebMonitor(Node):
                     },
                     "speed": None if row is None else float(row[4]),
                     "motion_state": motion_state,
+                    "injected_faults": sorted(injected_faults),
                     "localization": {
                         "state": localization_state,
                         "source": source,
@@ -1512,6 +1657,7 @@ class WebMonitor(Node):
                 self.get_parameter("software_version").value
             ),
             "summary": {"total": len(vehicles), **status_counts},
+            "simulation_faults": fault_snapshot,
             "services": {
                 "web_api": {"status": "online"},
                 "database": {

@@ -15,6 +15,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
 from grid_planner import OccupancyGridPlanner
+from simulation_faults import parse_fault_state
 
 
 def readiness_allows_drive(entry, now, timeout):
@@ -142,6 +143,7 @@ class TrafficSimulator(Node):
         self.observed = {}
         self.observed_at = {}
         self.localization_readiness = {}
+        self.injected_faults = {}
         self.states = {}
         now = time.monotonic()
         for index in range(1, self.vehicle_count + 1):
@@ -206,6 +208,12 @@ class TrafficSimulator(Node):
                 "blocked_since": None,
                 "last_replan": 0.0,
             }
+        self.create_subscription(
+            String,
+            "/traffic/simulation_faults",
+            self.on_simulation_faults,
+            10,
+        )
         self.create_timer(self.period, self.step)
         if self.pose_source == "gazebo":
             self.create_subscription(
@@ -227,6 +235,10 @@ class TrafficSimulator(Node):
             self._sector_min(message, 0.20, 1.20),
             self._sector_min(message, -1.20, -0.20),
         )
+
+    def on_simulation_faults(self, message):
+        """Apply the latest complete simulation fault registry."""
+        self.injected_faults = parse_fault_state(message.data, self.states)
 
     @staticmethod
     def _sector_min(message, minimum_angle, maximum_angle):
@@ -346,6 +358,15 @@ class TrafficSimulator(Node):
     def step(self):
         now = time.monotonic()
         for name, state in self.states.items():
+            faults = self.injected_faults.get(name, set())
+            if "freeze" in faults:
+                # Report movement intent while withholding the actuator command.
+                # The recorder can therefore exercise its normal stuck timer.
+                self._publish_control(name, motion_state="stalled")
+                continue
+            if "lidar_dropout" in faults:
+                self._publish_control(name, motion_state="sensor_wait")
+                continue
             if self.pose_source == "amcl" and (
                 name not in self.observed
                 or now - self.observed_at.get(name, 0.0) > self.pose_timeout

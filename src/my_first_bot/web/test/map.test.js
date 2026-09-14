@@ -51,7 +51,7 @@ test('teleport or localization jump starts a separate path segment', () => {
   assert.deepEqual(segments.map((segment) => segment.length), [2, 2]);
 });
 
-test('heat tooltip explains peak time, vehicles, and confirmed stuck history', () => {
+test('heat tooltip gives a concise peak summary and points to click details', () => {
   const label = heatTooltipLabel({
     x: 4.25,
     y: -2.75,
@@ -82,12 +82,11 @@ test('heat tooltip explains peak time, vehicles, and confirmed stuck history', (
     },
   }, 'count');
 
-  assert.match(label, /Heat cell · x 4\.25, y -2\.75/);
+  assert.match(label, /Area x 4\.3, y -2\.8/);
+  assert.match(label, /90 position samples · average speed 0\.24 m\/s/);
   assert.match(label, /Busiest:/);
-  assert.match(label, /At peak: 30 samples · 2 vehicle\(s\) · 12 slow/);
   assert.match(label, /Vehicles: vehicle_2, vehicle_5/);
-  assert.match(label, /Slow\/problem: vehicle_5 \(waiting vehicle\)/);
-  assert.match(label, /Normal: vehicle_2/);
-  assert.match(label, /Confirmed stuck: 2 event\(s\) · 1 vehicle\(s\)/);
-  assert.match(label, /Most stuck:/);
+  assert.match(label, /Click for full details/);
+  assert.doesNotMatch(label, /Slow\/problem:/);
+  assert.doesNotMatch(label, /Confirmed stuck:/);
 });
