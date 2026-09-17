@@ -106,6 +106,22 @@ def test_database_includes_localization_performance_table(tmp_path):
     }
     assert "localization_metrics" in tables
     assert "localization_validation_samples" in tables
+    assert "fault_events" in tables
+    fault_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(fault_events)")
+    }
+    assert {
+        "run_id",
+        "vehicle_id",
+        "fault_type",
+        "action",
+        "status",
+        "started_at",
+        "ended_at",
+        "started_sim_time",
+        "ended_sim_time",
+        "simulation_only",
+    } <= fault_columns
     assert connection.execute(
         "SELECT SQRT(AVG(position_error)) FROM localization_metrics"
     ).fetchone()[0] is None

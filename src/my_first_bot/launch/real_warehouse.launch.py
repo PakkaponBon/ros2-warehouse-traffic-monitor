@@ -20,6 +20,7 @@ def generate_launch_description():
     map_image = LaunchConfiguration("map_image")
     uwb_tag_config = LaunchConfiguration("uwb_tag_config")
     traffic_profile = LaunchConfiguration("traffic_profile")
+    random_vehicle = LaunchConfiguration("random_vehicle")
     gui = LaunchConfiguration("gui")
     use_web = LaunchConfiguration("use_web")
     use_rviz = LaunchConfiguration("use_rviz")
@@ -40,6 +41,7 @@ def generate_launch_description():
     spawn_seed = LaunchConfiguration("spawn_seed")
     use_uwb_startup = LaunchConfiguration("use_uwb_startup")
     enable_simulation_faults = LaunchConfiguration("enable_simulation_faults")
+    experiment_run_id = LaunchConfiguration("experiment_run_id")
     traffic_model = (
         package_share / "models" / "traffic_vehicle" / "localized_vehicle.sdf.in"
     )
@@ -205,6 +207,13 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("traffic_profile", default_value="newwarehouse"),
             DeclareLaunchArgument(
+                "random_vehicle",
+                default_value="last",
+                description=(
+                    "Random-roaming forklift: 'last', 'none', or vehicle_N"
+                ),
+            ),
+            DeclareLaunchArgument(
                 "database", default_value="~/.ros/real_warehouse_traffic.db"
             ),
             DeclareLaunchArgument("web_port", default_value="8080"),
@@ -245,6 +254,11 @@ def generate_launch_description():
                 default_value="true",
                 description="Enable Gazebo-only fault controls in the health page",
             ),
+            DeclareLaunchArgument(
+                "experiment_run_id",
+                default_value="",
+                description="Optional identifier for an AI fault-data experiment",
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(str(warehouse_runtime)),
                 launch_arguments={
@@ -260,6 +274,7 @@ def generate_launch_description():
                     "vehicle_count": vehicle_count,
                     "traffic_speed": traffic_speed,
                     "traffic_profile": traffic_profile,
+                    "random_vehicle": random_vehicle,
                     "traffic_pose_source": "amcl",
                     "localization_drive_interlock": use_uwb_startup,
                     "uwb_range_noise": uwb_range_noise,
@@ -273,6 +288,7 @@ def generate_launch_description():
                     "uwb_problem_samples": uwb_problem_samples,
                     "uwb_recovery_samples": uwb_recovery_samples,
                     "enable_simulation_faults": enable_simulation_faults,
+                    "experiment_run_id": experiment_run_id,
                 }.items(),
             ),
             Node(

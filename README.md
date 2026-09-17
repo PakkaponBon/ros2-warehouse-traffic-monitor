@@ -60,6 +60,16 @@ The default launch starts eight vehicles at safe randomized positions, loads
 the saved SLAM map, enables AMCL/UWB validation, records traffic, and serves the
 dashboard at <http://127.0.0.1:8080>.
 
+The realistic warehouse traffic profile uses repeatable fixed loops for every
+forklift except the last configured vehicle. That final vehicle chooses random
+reachable A* goals, adding variation without making the entire fleet
+unpredictable. Select a different random rover or disable random roaming with:
+
+```bash
+ros2 launch my_first_bot real_warehouse.launch.py random_vehicle:=vehicle_3
+ros2 launch my_first_bot real_warehouse.launch.py random_vehicle:=none
+```
+
 The system-health page is available at
 <http://127.0.0.1:8080/health.html>. It reports web/database availability,
 recorder freshness, and the latest telemetry, localization, UWB, and LiDAR
@@ -78,6 +88,24 @@ forklift interface. Disable the panel when it is not needed:
 ```bash
 ros2 launch my_first_bot real_warehouse.launch.py enable_simulation_faults:=false
 ```
+
+When simulation faults are enabled, the recorder also creates an AI/research
+label table named `fault_events`. Persistent faults are stored as one interval
+from activation to clearing; the one-second fault-registry refresh does not
+create duplicate rows. Completed teleport and restore requests are stored as
+point events, including failed requests. Every launch receives a generated
+experiment UUID, or you can set a stable identifier yourself:
+
+```bash
+ros2 launch my_first_bot real_warehouse.launch.py \
+  experiment_run_id:=freeze-test-01
+```
+
+The labels can be aligned with `samples`, `localization_metrics`, and
+`localization_validation_samples` by `vehicle_id` and their wall-clock or
+simulation-time intervals. `run_id` groups labels from the same experiment.
+These rows describe injected simulation faults; they are not AI predictions
+and are never recorded in a real-forklift launch unless explicitly configured.
 
 Useful overrides:
 

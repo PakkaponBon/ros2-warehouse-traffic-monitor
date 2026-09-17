@@ -91,6 +91,28 @@ CREATE INDEX IF NOT EXISTS localization_validation_time_idx
     ON localization_validation_samples(observed_at);
 CREATE INDEX IF NOT EXISTS localization_validation_vehicle_time_idx
     ON localization_validation_samples(vehicle_id, observed_at);
+
+CREATE TABLE IF NOT EXISTS fault_events (
+    id INTEGER PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    vehicle_id TEXT NOT NULL,
+    fault_type TEXT NOT NULL,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    ended_at REAL,
+    started_sim_time REAL,
+    ended_sim_time REAL,
+    simulation_only INTEGER NOT NULL DEFAULT 1,
+    detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS fault_events_time_idx
+    ON fault_events(started_at, ended_at);
+CREATE INDEX IF NOT EXISTS fault_events_run_vehicle_idx
+    ON fault_events(run_id, vehicle_id, started_at);
+CREATE UNIQUE INDEX IF NOT EXISTS fault_events_point_dedupe_idx
+    ON fault_events(run_id, vehicle_id, action, status, started_at)
+    WHERE action IN ('teleport', 'restore');
 """
 
 

@@ -6,6 +6,7 @@ import json
 import math
 import re
 import time
+import uuid
 
 from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
@@ -13,6 +14,8 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+
+from simulation_faults import FaultEventStore, vehicle_names
 
 from traffic_common import (
     classify_motion_state,
@@ -56,6 +59,8 @@ class TrafficRecorder(Node):
         self.declare_parameter("world_to_map_x", 0.0)
         self.declare_parameter("world_to_map_y", 0.0)
         self.declare_parameter("world_to_map_yaw", 0.0)
+        self.declare_parameter("record_simulation_faults", False)
+        self.declare_parameter("experiment_run_id", "")
 
         database_path = self.get_parameter("database_path").value
         self.connection = open_database(database_path)
@@ -99,6 +104,15 @@ class TrafficRecorder(Node):
         if self.traffic_vehicle_count < 0:
             raise ValueError("traffic_vehicle_count cannot be negative")
 
+        self.record_simulation_faults = bool(
+            self.get_parameter("record_simulation_faults").value
+        )
+        configured_run_id = str(
+            self.get_parameter("experiment_run_id").value
+        ).strip()
+        self.experiment_run_id = configured_run_id or uuid.uuid4().hex
+        self.fault_event_store = None
+
         self.tracks = {}
         self.ground_truth = {}
         self.traffic_speeds = {}
@@ -133,6 +147,28 @@ class TrafficRecorder(Node):
             lambda message: self.on_motion_state(self.main_vehicle, message),
             10,
         )
+        if self.record_simulation_faults:
+            self.fault_event_store = FaultEventStore(
+                self.connection,
+                self.experiment_run_id,
+                vehicle_names(self.traffic_vehicle_count),
+            )
+            self.traffic_subscriptions.extend(
+                [
+                    self.create_subscription(
+                        String,
+                        "/traffic/simulation_faults",
+                        self.on_simulation_faults,
+                        10,
+                    ),
+                    self.create_subscription(
+                        String,
+                        "/traffic/simulation_fault_status",
+                        self.on_simulation_fault_status,
+                        10,
+                    ),
+                ]
+            )
         self.traffic_subscriptions.append(
             self.create_subscription(
                 String,
@@ -201,6 +237,11 @@ class TrafficRecorder(Node):
             f"traffic poses use {self.traffic_pose_source}; Gazebo truth is retained "
             "only for localization error measurement"
         )
+        if self.fault_event_store is not None:
+            self.get_logger().info(
+                "Recording simulation fault labels for experiment run "
+                f"{self.experiment_run_id}"
+            )
 
     def on_models(self, message):
         now = time.monotonic()
@@ -324,6 +365,50 @@ class TrafficRecorder(Node):
             return
         payload["vehicle_id"] = name
         self.localization_validation[name] = (payload, time.monotonic())
+
+    def on_simulation_faults(self, message):
+        """Record only persistent-fault transitions from the full registry."""
+        if self.fault_event_store is None:
+            return
+        observed_at = time.time()
+        sim_time = self.get_clock().now().nanoseconds / 1.0e9
+        try:
+            started, ended = self.fault_event_store.update_persistent_state(
+                message.data, observed_at, sim_time
+            )
+        except ValueError as error:
+            self.get_logger().warning(
+                f"Ignored malformed simulation fault registry: {error}",
+                throttle_duration_sec=5.0,
+            )
+            return
+        for vehicle_id, fault_type in started:
+            self.get_logger().warning(
+                f"Fault label started: {vehicle_id} / {fault_type}"
+            )
+        for vehicle_id, fault_type in ended:
+            self.get_logger().info(
+                f"Fault label ended: {vehicle_id} / {fault_type}"
+            )
+
+    def on_simulation_fault_status(self, message):
+        """Record successful or failed one-shot Gazebo actions."""
+        if self.fault_event_store is None:
+            return
+        try:
+            inserted = self.fault_event_store.record_action_status(
+                message.data,
+                time.time(),
+                self.get_clock().now().nanoseconds / 1.0e9,
+            )
+        except ValueError as error:
+            self.get_logger().warning(
+                f"Ignored malformed simulation fault action status: {error}",
+                throttle_duration_sec=5.0,
+            )
+            return
+        if inserted:
+            self.get_logger().info("Recorded terminal simulation fault action")
 
     def _vehicle_context(self, name, track, now):
         command = self.commands.get(name)
@@ -616,6 +701,9 @@ class TrafficRecorder(Node):
         return key
 
     def destroy_node(self):
+        if self.fault_event_store is not None:
+            sim_time = self.get_clock().now().nanoseconds / 1.0e9
+            self.fault_event_store.close_open_events(time.time(), sim_time)
         self.connection.close()
         return super().destroy_node()
 

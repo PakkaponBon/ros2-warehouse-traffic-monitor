@@ -1717,6 +1717,14 @@ class WebMonitor(Node):
                 ),
                 "SELECT id, observed_at, sim_time, vehicle_id, state, raw_state, authoritative_source, amcl_x, amcl_y, uwb_x, uwb_y, error_m, visible_tag_count, uwb_residual_m, measurement_skew_s, amcl_age_s, uwb_age_s, amcl_stamp, uwb_stamp, uwb_reason FROM localization_validation_samples ORDER BY id DESC LIMIT ?",
             ),
+            "fault_events": (
+                (
+                    "id", "run_id", "vehicle_id", "fault_type", "action",
+                    "status", "started_at", "ended_at", "started_sim_time",
+                    "ended_sim_time", "simulation_only", "detail",
+                ),
+                "SELECT id, run_id, vehicle_id, fault_type, action, status, started_at, ended_at, started_sim_time, ended_sim_time, simulation_only, detail FROM fault_events ORDER BY id DESC LIMIT ?",
+            ),
         }
         database = {}
         with self.lock:

@@ -80,3 +80,15 @@ def test_random_path_falls_back_when_vehicle_temporarily_splits_aisle():
     )
     assert path
     assert goal == path[-1]
+
+
+def test_fixed_goal_path_falls_back_when_vehicle_temporarily_splits_aisle():
+    free = {(x, 0) for x in range(12)}
+    path, goal = planner(free, 12, 1).path_to_goal(
+        (0.5, 0.5),
+        (10.5, 0.5),
+        dynamic_points=[(4.5, 0.5)],
+    )
+    assert path
+    assert goal == (10.5, 0.5)
+    assert goal == path[-1]

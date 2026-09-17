@@ -4,9 +4,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
-from traffic_simulator import TrafficSimulator, readiness_allows_drive  # noqa: E402
+from traffic_simulator import (  # noqa: E402
+    TrafficSimulator,
+    readiness_allows_drive,
+    resolve_random_vehicle,
+)
 from spawn_localized_vehicle import render_model  # noqa: E402
 from simulation_faults import (  # noqa: E402
+    FaultEventStore,
+    fault_state_transitions,
     parse_fault_state,
     validate_fault_request,
     vehicle_names,
@@ -20,8 +26,10 @@ from uwb_amcl_initializer import (  # noqa: E402
 
 def test_every_profile_has_valid_starts_and_targets():
     for profile in TrafficSimulator.PROFILES.values():
-        if profile.get("random_map_navigation"):
+        if profile.get("map_navigation") or profile.get("random_map_navigation"):
             assert profile["starts"]
+            assert len(profile.get("fixed_routes", ())) >= len(profile["starts"])
+            assert all(len(route) >= 2 for route in profile["fixed_routes"])
             continue
         waypoints = profile["waypoints"]
         if profile.get("loop"):
@@ -45,6 +53,22 @@ def test_every_profile_has_valid_starts_and_targets():
 def test_vehicle_priority_is_stable():
     assert TrafficSimulator._vehicle_number("vehicle_2") == 2
     assert TrafficSimulator._vehicle_number("unknown") == 9999
+
+
+def test_random_vehicle_defaults_to_last_and_accepts_named_override():
+    names = ("vehicle_1", "vehicle_2", "vehicle_3")
+    assert resolve_random_vehicle("last", names) == "vehicle_3"
+    assert resolve_random_vehicle("vehicle_1", names) == "vehicle_1"
+    assert resolve_random_vehicle("none", names) is None
+
+
+def test_random_vehicle_rejects_unconfigured_vehicle():
+    try:
+        resolve_random_vehicle("vehicle_9", ("vehicle_1", "vehicle_2"))
+    except ValueError as error:
+        assert "random_vehicle" in str(error)
+    else:
+        raise AssertionError("unconfigured random vehicle was accepted")
 
 
 def test_localized_vehicle_template_gets_unique_topics_and_frames():
@@ -135,3 +159,69 @@ def test_fault_state_parser_ignores_unknown_faults_and_vehicles():
         vehicle_names(2),
     )
     assert state == {"vehicle_1": {"freeze"}}
+
+
+def test_fault_state_transitions_do_not_repeat_unchanged_faults():
+    active = {"vehicle_1": {"freeze", "lidar_dropout"}}
+    started, ended = fault_state_transitions({}, active)
+    assert started == [
+        ("vehicle_1", "freeze"),
+        ("vehicle_1", "lidar_dropout"),
+    ]
+    assert ended == []
+    assert fault_state_transitions(active, active) == ([], [])
+    assert fault_state_transitions(active, {}) == ([], started)
+
+
+def test_fault_event_store_records_one_interval_for_republished_state(tmp_path):
+    from traffic_common import open_database
+
+    connection = open_database(tmp_path / "traffic.db")
+    store = FaultEventStore(connection, "run-1", vehicle_names(2))
+    registry = '{"active":{"vehicle_1":["freeze"]}}'
+
+    assert store.update_persistent_state(registry, 100.0, 10.0) == (
+        [("vehicle_1", "freeze")],
+        [],
+    )
+    assert store.update_persistent_state(registry, 101.0, 11.0) == ([], [])
+    assert store.update_persistent_state('{"active":{}}', 105.0, 15.0) == (
+        [],
+        [("vehicle_1", "freeze")],
+    )
+
+    rows = connection.execute(
+        """SELECT run_id, vehicle_id, fault_type, status, started_at, ended_at,
+                  started_sim_time, ended_sim_time, simulation_only
+           FROM fault_events"""
+    ).fetchall()
+    connection.close()
+    assert rows == [
+        ("run-1", "vehicle_1", "freeze", "cleared", 100.0, 105.0, 10.0, 15.0, 1)
+    ]
+
+
+def test_fault_event_store_records_terminal_action_once(tmp_path):
+    from traffic_common import open_database
+
+    connection = open_database(tmp_path / "traffic.db")
+    store = FaultEventStore(connection, "run-2", vehicle_names(1))
+    requested = (
+        '{"action":"teleport","vehicle_id":"vehicle_1",'
+        '"status":"requested","observed_at":200.0}'
+    )
+    succeeded = (
+        '{"action":"teleport","vehicle_id":"vehicle_1",'
+        '"status":"succeeded","observed_at":201.0,"detail":"updated"}'
+    )
+
+    assert not store.record_action_status(requested, 200.0, 20.0)
+    assert store.record_action_status(succeeded, 201.0, 21.0)
+    assert not store.record_action_status(succeeded, 201.0, 21.0)
+    assert connection.execute(
+        """SELECT fault_type, action, status, started_at, ended_at, detail
+           FROM fault_events"""
+    ).fetchall() == [
+        ("teleport", "teleport", "succeeded", 201.0, 201.0, "updated")
+    ]
+    connection.close()

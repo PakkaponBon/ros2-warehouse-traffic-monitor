@@ -34,6 +34,7 @@ def generate_launch_description():
     traffic_seed = LaunchConfiguration("traffic_seed")
     traffic_profile = LaunchConfiguration("traffic_profile")
     traffic_pose_source = LaunchConfiguration("traffic_pose_source")
+    random_vehicle = LaunchConfiguration("random_vehicle")
     localization_drive_interlock = LaunchConfiguration(
         "localization_drive_interlock"
     )
@@ -55,6 +56,7 @@ def generate_launch_description():
     uwb_recovery_samples = LaunchConfiguration("uwb_recovery_samples")
     use_web = LaunchConfiguration("use_web")
     enable_simulation_faults = LaunchConfiguration("enable_simulation_faults")
+    experiment_run_id = LaunchConfiguration("experiment_run_id")
     use_rviz = LaunchConfiguration("use_rviz")
     gui = LaunchConfiguration("gui")
     spawn_robot = LaunchConfiguration("spawn_robot")
@@ -91,6 +93,13 @@ def generate_launch_description():
             DeclareLaunchArgument("traffic_profile", default_value="warehouse_2d"),
             DeclareLaunchArgument("traffic_pose_source", default_value="gazebo"),
             DeclareLaunchArgument(
+                "random_vehicle",
+                default_value="last",
+                description=(
+                    "Random-roaming traffic vehicle: 'last', 'none', or vehicle_N"
+                ),
+            ),
+            DeclareLaunchArgument(
                 "localization_drive_interlock",
                 default_value="false",
                 description=(
@@ -123,6 +132,14 @@ def generate_launch_description():
                 "enable_simulation_faults",
                 default_value="true",
                 description="Enable Gazebo-only fault controls in the health page",
+            ),
+            DeclareLaunchArgument(
+                "experiment_run_id",
+                default_value="",
+                description=(
+                    "Optional experiment identifier for simulation fault labels; "
+                    "a UUID is generated when empty"
+                ),
             ),
             # Keep Gazebo's system resources while also exposing this package's
             # bundled warehouse meshes referenced by newwarehouse.world.
@@ -218,6 +235,8 @@ def generate_launch_description():
                         "world_to_map_x": world_to_map_x,
                         "world_to_map_y": world_to_map_y,
                         "world_to_map_yaw": world_to_map_yaw,
+                        "record_simulation_faults": enable_simulation_faults,
+                        "experiment_run_id": experiment_run_id,
                     }
                 ],
                 output="screen",
@@ -234,6 +253,7 @@ def generate_launch_description():
                         "seed": traffic_seed,
                         "profile": traffic_profile,
                         "pose_source": traffic_pose_source,
+                        "random_vehicle": random_vehicle,
                         "require_localization_ready": localization_drive_interlock,
                         "map_yaml": map_yaml,
                     }

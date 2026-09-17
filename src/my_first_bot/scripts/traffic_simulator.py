@@ -30,6 +30,23 @@ def readiness_allows_drive(entry, now, timeout):
     )
 
 
+def resolve_random_vehicle(configured, names):
+    """Resolve one random-roaming vehicle from a launch-friendly value."""
+    allowed = tuple(names)
+    if not allowed:
+        return None
+    value = str(configured or "last").strip()
+    if value.lower() == "last":
+        return allowed[-1]
+    if value.lower() in {"none", "off"}:
+        return None
+    if value not in allowed:
+        raise ValueError(
+            f"random_vehicle must be 'last', 'none', or one of {list(allowed)}"
+        )
+    return value
+
+
 class TrafficSimulator(Node):
     """Drive existing `vehicle_N` Gazebo models for repeatable traffic."""
 
@@ -45,8 +62,9 @@ class TrafficSimulator(Node):
                 (17.0, 0.0), (17.0, 9.0), (4.0, 9.0), (-4.0, 9.0),
             ),
         },
-        # The saved occupancy map is used to generate a new random A* route
-        # whenever a vehicle reaches its goal or remains blocked.
+        # Seven repeatable loops exercise known warehouse traffic patterns.
+        # One configurable vehicle uses random A* goals to add variation.
+        # Every leg is still planned over the saved occupancy map.
         "newwarehouse": {
             "starts": (
                 (-16.0, -18.0),
@@ -58,7 +76,18 @@ class TrafficSimulator(Node):
                 (4.0, 19.4),
                 (-10.0, 19.4),
             ),
-            "random_map_navigation": True,
+            "map_navigation": True,
+            "random_vehicle": "last",
+            "fixed_routes": (
+                ((-18.0, -18.0), (-5.0, -18.0), (-5.0, -12.0), (-18.0, -12.0)),
+                ((-24.0, -13.0), (-5.0, -13.0), (-5.0, -8.0), (-24.0, -8.0)),
+                ((7.0, -18.0), (21.0, -18.0), (21.0, -13.0), (7.0, -13.0)),
+                ((6.0, -8.0), (24.0, -8.0), (24.0, -3.0), (6.0, -3.0)),
+                ((6.0, 2.0), (24.0, 2.0), (24.0, 7.0), (6.0, 7.0)),
+                ((6.0, 12.0), (20.0, 12.0), (20.0, 17.0), (6.0, 17.0)),
+                ((-18.0, 12.0), (-5.0, 12.0), (-5.0, 17.0), (-18.0, 17.0)),
+                ((-5.0, -18.0), (5.0, -18.0), (5.0, 18.0), (-5.0, 18.0)),
+            ),
         },
     }
 
@@ -80,6 +109,7 @@ class TrafficSimulator(Node):
         self.declare_parameter("pose_timeout", 3.0)
         self.declare_parameter("require_localization_ready", False)
         self.declare_parameter("readiness_timeout", 2.0)
+        self.declare_parameter("random_vehicle", "")
         self.vehicle_count = int(self.get_parameter("vehicle_count").value)
         self.max_speed = float(self.get_parameter("max_speed").value)
         self.period = float(self.get_parameter("update_period").value)
@@ -98,7 +128,10 @@ class TrafficSimulator(Node):
         self.starts = profile["starts"]
         self.loop_route = bool(profile.get("loop", False))
         self.target_indices = profile.get("target_indices")
-        self.random_navigation = bool(profile.get("random_map_navigation", False))
+        self.map_navigation = bool(
+            profile.get("map_navigation", profile.get("random_map_navigation", False))
+        )
+        self.fixed_routes = tuple(profile.get("fixed_routes", ()))
         self.avoidance_distance = float(
             self.get_parameter("avoidance_distance").value
         )
@@ -118,7 +151,7 @@ class TrafficSimulator(Node):
             0.5, float(self.get_parameter("readiness_timeout").value)
         )
         self.planner = None
-        if self.random_navigation:
+        if self.map_navigation:
             map_yaml = str(self.get_parameter("map_yaml").value)
             if not map_yaml:
                 raise ValueError("map_yaml is required for random map navigation")
@@ -134,6 +167,21 @@ class TrafficSimulator(Node):
             )
         seed = int(self.get_parameter("seed").value)
         self.random = random.Random(seed)
+        names = tuple(
+            f"{self.prefix}{index}" for index in range(1, self.vehicle_count + 1)
+        )
+        configured_random_vehicle = str(
+            self.get_parameter("random_vehicle").value
+        ).strip() or str(profile.get("random_vehicle", "last"))
+        self.random_vehicle = (
+            resolve_random_vehicle(configured_random_vehicle, names)
+            if self.map_navigation
+            else None
+        )
+        if self.map_navigation and len(self.fixed_routes) < self.vehicle_count:
+            raise ValueError(
+                f"profile '{profile_name}' needs one fixed route per configured vehicle"
+            )
         self.command_publishers = {}
         self.state_publishers = {}
         self.pose_subscriptions = []
@@ -150,7 +198,11 @@ class TrafficSimulator(Node):
             point = self.starts[index - 1]
             name = f"{self.prefix}{index}"
             target_index = None
-            if self.random_navigation:
+            navigation_mode = "waypoints"
+            fixed_route = ()
+            if self.map_navigation:
+                navigation_mode = "random" if name == self.random_vehicle else "fixed"
+                fixed_route = tuple(self.fixed_routes[index - 1])
                 target = point
             elif self.loop_route:
                 target_index = self.target_indices[index - 1]
@@ -185,7 +237,7 @@ class TrafficSimulator(Node):
                         10,
                     )
                 )
-            if self.random_navigation:
+            if self.map_navigation:
                 self.scan_subscriptions.append(
                     self.create_subscription(
                         LaserScan,
@@ -207,6 +259,9 @@ class TrafficSimulator(Node):
                 "goal": None,
                 "blocked_since": None,
                 "last_replan": 0.0,
+                "navigation_mode": navigation_mode,
+                "fixed_route": fixed_route,
+                "fixed_route_index": 0,
             }
         self.create_subscription(
             String,
@@ -223,7 +278,8 @@ class TrafficSimulator(Node):
             f"Warehouse traffic enabled for {self.vehicle_count} vehicles "
             f"(profile={profile_name}, pose={self.pose_source}, "
             "navigation="
-            f"{'random A* + LiDAR avoidance' if self.random_navigation else 'waypoints'}, "
+            f"{'fixed loops + one random A* rover' if self.map_navigation else 'waypoints'}, "
+            f"random_vehicle={self.random_vehicle or 'none'}, "
             f"speed <= {self.max_speed:.2f} m/s, seed={seed})"
         )
 
@@ -328,11 +384,60 @@ class TrafficSimulator(Node):
         )
         return True
 
-    def _random_target(self, name, state, now):
+    def _plan_fixed_route(self, name, state, now):
+        route = state["fixed_route"]
+        if not route:
+            self.get_logger().error(f"No fixed route configured for {name}")
+            state["last_replan"] = now
+            return False
+        # Move to the next loop stop when this vehicle is already at the
+        # current one. This also handles a randomized spawn near a route stop.
+        for _unused in route:
+            requested_goal = route[state["fixed_route_index"]]
+            if math.hypot(
+                requested_goal[0] - state["x"],
+                requested_goal[1] - state["y"],
+            ) >= 0.75:
+                break
+            state["fixed_route_index"] = (
+                state["fixed_route_index"] + 1
+            ) % len(route)
+        requested_goal = route[state["fixed_route_index"]]
+        dynamic = [
+            (position[0], position[1])
+            for other_name, position in self.observed.items()
+            if other_name != name
+        ]
+        path, goal = self.planner.path_to_goal(
+            (state["x"], state["y"]), requested_goal, dynamic
+        )
+        state["path"] = path
+        state["path_index"] = 0
+        state["goal"] = goal
+        state["last_replan"] = now
+        if not path:
+            self.get_logger().warning(
+                f"No fixed route available for {name} to "
+                f"({requested_goal[0]:.1f}, {requested_goal[1]:.1f}); it will retry"
+            )
+            return False
+        state["target"] = path[0]
+        self.get_logger().info(
+            f"{name} fixed stop {state['fixed_route_index'] + 1}/{len(route)}: "
+            f"({goal[0]:.1f}, {goal[1]:.1f}), {len(path)} path segment(s)"
+        )
+        return True
+
+    def _plan_map_route(self, name, state, now):
+        if state["navigation_mode"] == "random":
+            return self._plan_random_route(name, state, now)
+        return self._plan_fixed_route(name, state, now)
+
+    def _map_target(self, name, state, now):
         if not state["path"]:
             if now - state["last_replan"] < 1.0:
                 return None
-            if not self._plan_random_route(name, state, now):
+            if not self._plan_map_route(name, state, now):
                 return None
         while state["path_index"] < len(state["path"]):
             target = state["path"][state["path_index"]]
@@ -341,7 +446,7 @@ class TrafficSimulator(Node):
                 return target
             state["path_index"] += 1
         state["path"] = []
-        if not self._plan_random_route(name, state, now):
+        if not self._plan_map_route(name, state, now):
             return None
         return state["target"]
 
@@ -384,11 +489,11 @@ class TrafficSimulator(Node):
                 state["x"], state["y"], state["yaw"] = self.observed[name]
             elapsed = min(max(now - state["last"], 0.0), 1.0)
             state["last"] = now
-            if self.random_navigation:
+            if self.map_navigation:
                 if name not in self.scans or now - self.scans[name][0] > 1.0:
                     self._publish_control(name, motion_state="sensor_wait")
                     continue
-                target = self._random_target(name, state, now)
+                target = self._map_target(name, state, now)
                 if target is None:
                     self._publish_control(name, motion_state="planning")
                     continue
@@ -397,7 +502,7 @@ class TrafficSimulator(Node):
                 target_x, target_y = state["target"]
             dx, dy = target_x - state["x"], target_y - state["y"]
             distance = math.hypot(dx, dy)
-            if not self.random_navigation and distance < 0.3:
+            if not self.map_navigation and distance < 0.3:
                 if self.loop_route:
                     state["target_index"] = (
                         state["target_index"] + 1
@@ -486,7 +591,7 @@ class TrafficSimulator(Node):
                     speed = min(speed, 0.08)
 
             lidar_blocked = False
-            if self.random_navigation:
+            if self.map_navigation:
                 _scan_time, front, left, right = self.scans[name]
                 turn_side = 1.0 if left >= right else -1.0
                 # A forward return does not obstruct an in-place turn. Wait
@@ -530,7 +635,7 @@ class TrafficSimulator(Node):
                         now - state["blocked_since"] >= self.blocked_replan_time
                         and now - state["last_replan"] >= self.blocked_replan_time
                     ):
-                        self._plan_random_route(name, state, now)
+                        self._plan_map_route(name, state, now)
                         state["blocked_since"] = now
                         speed = 0.0
                 else:

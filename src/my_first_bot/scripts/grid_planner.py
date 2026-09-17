@@ -208,6 +208,29 @@ class OccupancyGridPlanner:
                     )
         return [], None
 
+    def path_to_goal(self, start_xy, goal_xy, dynamic_points=()):
+        """Plan a simplified route between two world-space positions.
+
+        Route endpoints are snapped to the nearest safe map cells. Dynamic
+        vehicle positions are avoided when possible, with a static-map
+        fallback so a temporarily blocked aisle does not invalidate a fixed
+        route permanently.
+        """
+        start = self.nearest_free(*start_xy)
+        goal = self.nearest_free(*goal_xy)
+        if start is None or goal is None:
+            return [], None
+        temporary = self.blocked_near(dynamic_points)
+        for blocked in (temporary, set()):
+            cells = self.plan_cells(start, goal, blocked)
+            if cells:
+                cells = self._simplify(cells, blocked)
+                return (
+                    [self.cell_to_world(cell) for cell in cells[1:]],
+                    self.cell_to_world(goal),
+                )
+        return [], self.cell_to_world(goal)
+
     def plan_cells(self, start, goal, temporary=()):
         """
         Run A* from ``start`` to ``goal`` and return a cell-by-cell route.
