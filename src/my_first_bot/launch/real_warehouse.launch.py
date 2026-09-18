@@ -40,6 +40,7 @@ def generate_launch_description():
     randomize_starts = LaunchConfiguration("randomize_starts")
     spawn_seed = LaunchConfiguration("spawn_seed")
     use_uwb_startup = LaunchConfiguration("use_uwb_startup")
+    enable_side_tasks = LaunchConfiguration("enable_side_tasks")
     enable_simulation_faults = LaunchConfiguration("enable_simulation_faults")
     experiment_run_id = LaunchConfiguration("experiment_run_id")
     traffic_model = (
@@ -255,6 +256,11 @@ def generate_launch_description():
                 description="Enable Gazebo-only fault controls in the health page",
             ),
             DeclareLaunchArgument(
+                "enable_side_tasks",
+                default_value="true",
+                description="Enable browser-controlled simulation side-work tasks",
+            ),
+            DeclareLaunchArgument(
                 "experiment_run_id",
                 default_value="",
                 description="Optional identifier for an AI fault-data experiment",
@@ -288,6 +294,7 @@ def generate_launch_description():
                     "uwb_problem_samples": uwb_problem_samples,
                     "uwb_recovery_samples": uwb_recovery_samples,
                     "enable_simulation_faults": enable_simulation_faults,
+                    "enable_side_tasks": enable_side_tasks,
                     "experiment_run_id": experiment_run_id,
                 }.items(),
             ),

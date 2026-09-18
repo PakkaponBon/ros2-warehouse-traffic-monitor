@@ -56,6 +56,7 @@ def generate_launch_description():
     uwb_recovery_samples = LaunchConfiguration("uwb_recovery_samples")
     use_web = LaunchConfiguration("use_web")
     enable_simulation_faults = LaunchConfiguration("enable_simulation_faults")
+    enable_side_tasks = LaunchConfiguration("enable_side_tasks")
     experiment_run_id = LaunchConfiguration("experiment_run_id")
     use_rviz = LaunchConfiguration("use_rviz")
     gui = LaunchConfiguration("gui")
@@ -132,6 +133,11 @@ def generate_launch_description():
                 "enable_simulation_faults",
                 default_value="true",
                 description="Enable Gazebo-only fault controls in the health page",
+            ),
+            DeclareLaunchArgument(
+                "enable_side_tasks",
+                default_value="true",
+                description="Enable browser-controlled simulation side-work tasks",
             ),
             DeclareLaunchArgument(
                 "experiment_run_id",
@@ -336,6 +342,7 @@ def generate_launch_description():
                         "uwb_tag_config": uwb_tag_config,
                         "traffic_vehicle_count": vehicle_count,
                         "enable_simulation_faults": enable_simulation_faults,
+                        "enable_side_tasks": enable_side_tasks,
                     }
                 ],
                 condition=IfCondition(use_web),

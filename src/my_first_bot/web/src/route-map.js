@@ -7,6 +7,7 @@ export class RouteSuggestionMap {
     this.image = null;
     this.rotated = false;
     this.route = null;
+    this.destination = null;
     this.destinationHandler = null;
     canvas.addEventListener('click', (event) => {
       if (this.destinationHandler) this.destinationHandler(this.eventToWorld(event));
@@ -71,6 +72,11 @@ export class RouteSuggestionMap {
 
   setRoute(route) {
     this.route = route;
+    this.draw();
+  }
+
+  setDestination(destination) {
+    this.destination = destination;
     this.draw();
   }
 
@@ -140,7 +146,10 @@ export class RouteSuggestionMap {
 
   draw() {
     this.drawBase();
-    if (!this.route) return;
+    if (!this.route) {
+      this.drawMarker(this.destination, '#b06cff', 'TASK');
+      return;
+    }
     const ctx = this.ctx;
     for (const cell of this.route.risk_cells || []) {
       const point = this.project(cell.x, cell.y);

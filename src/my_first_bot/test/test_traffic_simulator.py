@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
 from traffic_simulator import (  # noqa: E402
     TrafficSimulator,
+    parse_side_task_request,
     readiness_allows_drive,
     resolve_random_vehicle,
 )
@@ -69,6 +70,40 @@ def test_random_vehicle_rejects_unconfigured_vehicle():
         assert "random_vehicle" in str(error)
     else:
         raise AssertionError("unconfigured random vehicle was accepted")
+
+
+def test_side_task_assignment_and_cancellation_are_validated():
+    vehicles = ("vehicle_1", "vehicle_2")
+    assert parse_side_task_request(
+        '{"vehicle_id":"vehicle_2","x":4.5,"y":-3,"dwell_seconds":12}',
+        vehicles,
+    ) == {
+        "action": "assign",
+        "vehicle_id": "vehicle_2",
+        "x": 4.5,
+        "y": -3.0,
+        "dwell_seconds": 12.0,
+        "task_id": "",
+        "replace": False,
+    }
+    assert parse_side_task_request(
+        '{"action":"cancel","vehicle_id":"vehicle_2"}', vehicles
+    ) == {"action": "cancel", "vehicle_id": "vehicle_2"}
+
+
+def test_side_task_rejects_unknown_vehicle_and_invalid_coordinates():
+    vehicles = ("vehicle_1",)
+    for request in (
+        '{"vehicle_id":"vehicle_9","x":1,"y":2}',
+        '{"vehicle_id":"vehicle_1","x":"bad","y":2}',
+        '{"vehicle_id":"vehicle_1","x":1,"y":2,"dwell_seconds":-1}',
+    ):
+        try:
+            parse_side_task_request(request, vehicles)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid side task was accepted: {request}")
 
 
 def test_localized_vehicle_template_gets_unique_topics_and_frames():

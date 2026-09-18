@@ -1,3 +1,5 @@
+import { buildHeatScale, heatColor } from './heatmap.js';
+
 const COLORS = ['#8d6bff', '#00a7d8', '#ef7d50', '#21a47b', '#d45fc0', '#789637', '#d99924', '#4a75dc', '#d35c69'];
 
 function formatTimeWindow(start, end) {
@@ -32,6 +34,45 @@ export function heatTooltipLabel(value, metric = 'count') {
   return lines.join('\n');
 }
 
+// Canvas-space camera. World/ROS projection remains independent of navigation.
+export class MapViewport {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.scale = 1;
+    this.x = 0;
+    this.y = 0;
+  }
+
+  unproject(x, y) {
+    return { x: (x - this.x) / this.scale, y: (y - this.y) / this.scale };
+  }
+
+  clamp() {
+    this.x = Math.min(0, Math.max(this.canvas.width * (1 - this.scale), this.x));
+    this.y = Math.min(0, Math.max(this.canvas.height * (1 - this.scale), this.y));
+  }
+
+  zoom(factor, x = this.canvas.width / 2, y = this.canvas.height / 2) {
+    const anchor = this.unproject(x, y);
+    this.scale = Math.min(5, Math.max(1, this.scale * factor));
+    this.x = x - anchor.x * this.scale;
+    this.y = y - anchor.y * this.scale;
+    this.clamp();
+  }
+
+  pan(dx, dy) {
+    this.x += dx;
+    this.y += dy;
+    this.clamp();
+  }
+
+  reset() {
+    this.scale = 1;
+    this.x = 0;
+    this.y = 0;
+  }
+}
+
 export class WarehouseMap {
   constructor(canvas) {
     this.canvas = canvas;
@@ -45,10 +86,71 @@ export class WarehouseMap {
     this.lastOptions = null;
     this.rotated = false;
     this.onHeatSelect = null;
+    this.onVehicleSelect = null;
+    this.onEventSelect = null;
+    this.onViewportChange = null;
+    this.viewport = new MapViewport(canvas);
+    this.drag = null;
+    this.suppressClick = false;
     this.tooltip = document.querySelector('#mapTooltip');
     canvas.addEventListener('mousemove', (event) => this.showTooltip(event));
-    canvas.addEventListener('click', (event) => this.selectHeat(event));
+    canvas.addEventListener('click', (event) => this.selectItem(event));
     canvas.addEventListener('mouseleave', () => { this.tooltip.style.display = 'none'; });
+    canvas.addEventListener('pointerdown', (event) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      this.suppressClick = false;
+      if (this.viewport.scale === 1) return;
+      this.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+      this.suppressClick = false;
+      canvas.setPointerCapture(event.pointerId);
+    });
+    canvas.addEventListener('pointermove', (event) => {
+      if (!this.drag || this.drag.id !== event.pointerId) return;
+      const dx = event.clientX - this.drag.x;
+      const dy = event.clientY - this.drag.y;
+      if (!this.drag.moved && Math.hypot(dx, dy) < 4) return;
+      this.drag.moved = true;
+      const box = canvas.getBoundingClientRect();
+      this.viewport.pan(dx * canvas.width / box.width, dy * canvas.height / box.height);
+      this.drag.x = event.clientX;
+      this.drag.y = event.clientY;
+      this.tooltip.style.display = 'none';
+      this.refreshView();
+    });
+    const finishDrag = (event) => {
+      if (!this.drag || this.drag.id !== event.pointerId) return;
+      this.suppressClick = this.drag.moved;
+      this.drag = null;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    };
+    canvas.addEventListener('pointerup', finishDrag);
+    canvas.addEventListener('pointercancel', finishDrag);
+    canvas.addEventListener('lostpointercapture', finishDrag);
+    canvas.addEventListener('wheel', (event) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const box = canvas.getBoundingClientRect();
+      this.zoomBy(event.deltaY < 0 ? 1.15 : 1 / 1.15,
+        (event.clientX - box.left) * canvas.width / box.width,
+        (event.clientY - box.top) * canvas.height / box.height);
+    }, { passive: false });
+    canvas.addEventListener('keydown', (event) => {
+      if (event.key === '+' || event.key === '=') this.zoomBy(1.3);
+      else if (event.key === '-') this.zoomBy(1 / 1.3);
+      else if (event.key === '0') this.resetView();
+      else if (event.key.startsWith('Arrow') && this.viewport.scale > 1) {
+        const step = canvas.width * .08;
+        this.viewport.pan(event.key === 'ArrowLeft' ? step : event.key === 'ArrowRight' ? -step : 0,
+          event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0);
+        this.refreshView();
+      } else return;
+      event.preventDefault();
+    });
+    this.resizeObserver = new ResizeObserver(() => {
+      if (canvas.getBoundingClientRect().width) this.refreshView();
+    });
+    this.resizeObserver.observe(canvas);
+
   }
 
   async load(info, source = '/map.png') {
@@ -61,6 +163,7 @@ export class WarehouseMap {
       ? this.width() / this.height()
       : this.height() / this.width();
     this.canvas.height = Math.max(1, Math.round(this.canvas.width * displayRatio));
+    this.viewport.reset();
     return new Promise((resolve) => {
       const image = new Image();
       image.onload = () => { this.image = image; resolve(); };
@@ -87,9 +190,51 @@ export class WarehouseMap {
     };
   }
 
+  // Keep markers and labels readable in CSS pixels at every viewport size/zoom.
+  markerUnit() {
+    const width = this.canvas.getBoundingClientRect().width || this.canvas.width;
+    return this.canvas.width / width / this.viewport.scale;
+  }
+
+  refreshView() {
+    this.tooltip.style.display = 'none';
+    this.canvas.classList.toggle('is-zoomed', this.viewport.scale > 1);
+    if (this.lastData && this.lastOptions) this.draw(this.lastData, this.lastOptions);
+    this.onViewportChange?.(this.viewport.scale);
+  }
+
+  zoomBy(factor, x, y) {
+    this.viewport.zoom(factor, x, y);
+    this.refreshView();
+  }
+
+  resetView() {
+    this.viewport.reset();
+    this.refreshView();
+  }
+
+  revealPoint(point) {
+    if (!point || this.viewport.scale === 1) return;
+    const projected = this.project(Number(point.x), Number(point.y));
+    const screenX = projected.x * this.viewport.scale + this.viewport.x;
+    const screenY = projected.y * this.viewport.scale + this.viewport.y;
+    const margin = this.canvas.width * .06;
+    if (screenX >= margin && screenX <= this.canvas.width - margin
+        && screenY >= margin && screenY <= this.canvas.height - margin) return;
+    this.viewport.x = this.canvas.width / 2 - projected.x * this.viewport.scale;
+    this.viewport.y = this.canvas.height / 2 - projected.y * this.viewport.scale;
+    this.viewport.clamp();
+  }
+
+  clearSelection() {
+    this.focused = null;
+    this.focusedVehicle = null;
+    this.refreshView();
+  }
+
   drawGrid() {
     const { ctx, canvas } = this;
-    ctx.fillStyle = '#e9eef0';
+    ctx.fillStyle = '#f1f5f3';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (this.image) {
       if (this.rotated) {
@@ -104,7 +249,8 @@ export class WarehouseMap {
     }
     ctx.fillStyle = '#ffffff18';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#aebbc499';
+    if (!this.lastOptions?.grid) return;
+    ctx.strokeStyle = '#b8c7bf66';
     ctx.lineWidth = 1;
     ctx.font = '11px system-ui';
     ctx.fillStyle = '#536875';
@@ -127,35 +273,29 @@ export class WarehouseMap {
       if (this.rotated) ctx.fillText(`${y.toFixed(0)} m`, start.x + 4, canvas.height - 8);
       else ctx.fillText(`${y.toFixed(0)} m`, 7, start.y - 4);
     }
-    ctx.strokeStyle = '#43596a'; ctx.lineWidth = 7; ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+
   }
 
-  drawHeat(data, filter, metric = 'count') {
-    if (!data.density.length) return;
-    const counts = data.density.map((value) => Number(value[metric] || 0)).sort((a, b) => a - b);
-    const minimum = counts[Math.floor((counts.length - 1) * filter)] || 0;
-    const cap = Math.max(minimum + 1, counts[Math.floor((counts.length - 1) * 0.95)] || 1);
-    const low = Math.log1p(minimum); const span = Math.max(0.001, Math.log1p(cap) - low);
-    data.density.forEach((value) => {
-      const metricValue = Number(value[metric] || 0);
-      if (metricValue < minimum) return;
-      const amount = Math.max(0, Math.min(1, (Math.log1p(metricValue) - low) / span));
-      const radius = 12 + 16 * amount;
+  drawHeat(data, filter, metric = 'count', opacity = .65) {
+    if (this.heatCache?.density !== data.density || this.heatCache.metric !== metric || this.heatCache.filter !== filter) {
+      this.heatScale = buildHeatScale(data.density, metric, filter);
+      this.heatCache = { density: data.density, metric, filter };
+    }
+    const alpha = Math.max(.2, Math.min(.9, opacity));
+    // Paint lower values first; retain the same color scale when low values are hidden.
+    [...this.heatScale.visible].reverse().forEach((value) => {
+      const amount = this.heatScale.fraction(Number(value[metric]));
+      const radius = 16 + 12 * amount;
       const { x, y } = this.project(value.x, value.y);
+      const rgb = heatColor(amount).join(', ');
       const gradient = this.ctx.createRadialGradient(x, y, 0, x, y, radius);
-      const hue = Math.round(210 * (1 - amount));
-      gradient.addColorStop(0, `hsla(${hue}, 90%, 53%, ${0.15 + 0.4 * amount})`);
-      gradient.addColorStop(1, `hsla(${hue}, 90%, 53%, 0)`);
-      this.ctx.fillStyle = gradient; this.ctx.beginPath(); this.ctx.arc(x, y, radius, 0, Math.PI * 2); this.ctx.fill();
-      this.hits.push({
-        x,
-        y,
-        radius,
-        priority: 0,
-        label: heatTooltipLabel(value, metric),
-        heatValue: value,
-        heatMetric: metric,
-      });
+      gradient.addColorStop(0, `rgba(${rgb}, ${alpha})`);
+      gradient.addColorStop(.4, `rgba(${rgb}, ${alpha * .75})`);
+      gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+      this.ctx.fillStyle = gradient;
+      this.ctx.beginPath(); this.ctx.arc(x, y, radius, 0, Math.PI * 2); this.ctx.fill();
+      this.hits.push({ x, y, radius, priority: 0,
+        label: heatTooltipLabel(value, metric), heatValue: value, heatMetric: metric });
     });
   }
 
@@ -248,14 +388,14 @@ export class WarehouseMap {
       for (const segment of segments) {
         // Dark outline separates the selected path from dense heat overlays.
         this.traceSegment(segment);
-        this.ctx.strokeStyle = '#071521cc';
-        this.ctx.lineWidth = 8;
+        this.ctx.strokeStyle = '#ffffffdd';
+        this.ctx.lineWidth = 5 * this.markerUnit();
         this.ctx.stroke();
         this.traceSegment(segment);
         this.ctx.strokeStyle = color;
-        this.ctx.lineWidth = 4.5;
+        this.ctx.lineWidth = 2.5 * this.markerUnit();
         this.ctx.shadowColor = color;
-        this.ctx.shadowBlur = 5;
+        this.ctx.shadowBlur = 0;
         this.ctx.stroke();
         this.ctx.shadowBlur = 0;
         this.drawPathArrows(segment, color);
@@ -264,40 +404,58 @@ export class WarehouseMap {
     });
   }
 
-  circle(value, radius, color, label, stroke) {
+  circle(value, radius, color, label, stroke, type) {
+    radius *= this.markerUnit() * .7;
     const { x, y } = this.project(value.x, value.y);
     this.ctx.fillStyle = color; this.ctx.beginPath(); this.ctx.arc(x, y, radius, 0, Math.PI * 2); this.ctx.fill();
     if (stroke) { this.ctx.strokeStyle = stroke; this.ctx.lineWidth = 2; this.ctx.stroke(); }
-    this.hits.push({ x, y, radius: Math.max(radius, 12), priority: 2, label });
+    this.hits.push({ x, y, radius: Math.max(radius, 12), priority: 2, label, eventValue: value, eventType: type });
   }
 
   drawVehicle(vehicle) {
     const { x, y } = this.project(vehicle.x, vehicle.y);
     const state = vehicle.motion_state || (vehicle.speed < 0.05 ? 'unknown' : 'moving');
     const stateColors = {
-      moving: '#25d0ae',
-      turning: '#3da4ff',
-      waiting_vehicle: '#ffbf47',
+      moving: '#208366',
+      side_task: '#208366',
+      returning_route: '#208366',
+      side_work: '#c28c30',
+      task_planning: '#91a7b9',
+      turning: '#3c84b5',
+      waiting_vehicle: '#c28c30',
       blocked_obstacle: '#ff6856',
       stalled: '#ff5263',
-      stuck: '#ff5263',
+      stuck: '#cb5b51',
       idle: '#91a7b9',
       planning: '#91a7b9',
       localizing: '#91a7b9',
       sensor_wait: '#91a7b9',
       unknown: '#91a7b9',
     };
-    const color = vehicle.vehicle_id === 'my_robot'
-      ? '#ffffff'
-      : stateColors[state] || stateColors.unknown;
-    this.ctx.shadowColor = '#07111a'; this.ctx.shadowBlur = 8; this.ctx.fillStyle = color;
-    this.ctx.beginPath(); this.ctx.arc(x, y, 9, 0, Math.PI * 2); this.ctx.fill(); this.ctx.shadowBlur = 0;
-    this.ctx.strokeStyle = '#132638'; this.ctx.lineWidth = 2; this.ctx.stroke();
-    const label = vehicle.vehicle_id.replace('vehicle_', 'V'); this.ctx.font = 'bold 11px system-ui';
-    const labelWidth = this.ctx.measureText(label).width + 10; this.ctx.fillStyle = '#0b1825e8';
-    this.ctx.fillRect(x - labelWidth / 2, y - 29, labelWidth, 16); this.ctx.fillStyle = '#f2f7fa';
-    this.ctx.textAlign = 'center'; this.ctx.fillText(label, x, y - 17); this.ctx.textAlign = 'start';
-    this.hits.push({ x, y, radius: 13, priority: 3, label: `${vehicle.vehicle_id} · ${state.replaceAll('_', ' ')} · ${vehicle.speed.toFixed(2)} m/s · x ${vehicle.x.toFixed(2)}, y ${vehicle.y.toFixed(2)}` });
+    const color = stateColors[state] || stateColors.unknown;
+    const unit = this.markerUnit();
+    const selected = vehicle.vehicle_id === this.focusedVehicle;
+    this.ctx.save();
+    this.ctx.translate(x, y);
+    this.ctx.scale(unit, unit);
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.shadowColor = '#23413630'; this.ctx.shadowBlur = 5;
+    this.ctx.beginPath(); this.ctx.arc(0, 0, selected ? 10 : 8, 0, Math.PI * 2); this.ctx.fill();
+    this.ctx.shadowBlur = 0;
+    this.ctx.fillStyle = color;
+    this.ctx.beginPath(); this.ctx.arc(0, 0, selected ? 6.5 : 5.5, 0, Math.PI * 2); this.ctx.fill();
+    if (this.lastOptions?.labels !== false || selected) {
+      const label = vehicle.vehicle_id === 'my_robot' ? 'AMR' : vehicle.vehicle_id.replace('vehicle_', 'V').replace('forklift_', 'F');
+      this.ctx.font = '600 11px system-ui';
+      const width = this.ctx.measureText(label).width + 14;
+      this.ctx.fillStyle = selected ? '#176f56' : '#fffffff2';
+      this.ctx.beginPath(); this.ctx.roundRect(-width / 2, -30, width, 19, 5); this.ctx.fill();
+      this.ctx.fillStyle = selected ? '#ffffff' : '#334d41';
+      this.ctx.textAlign = 'center'; this.ctx.fillText(label, 0, -17);
+    }
+    this.ctx.restore();
+    this.hits.push({ x, y, radius: 15 * unit, priority: 3, vehicleId: vehicle.vehicle_id,
+      label: `${vehicle.vehicle_id} · ${state.replaceAll('_', ' ')} · ${vehicle.speed.toFixed(2)} m/s\nClick to see this vehicle’s route` });
   }
 
   drawUwbTags() {
@@ -334,11 +492,16 @@ export class WarehouseMap {
   draw(data, options) {
     this.lastData = data;
     this.lastOptions = options;
-    this.hits = []; this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height); this.drawGrid();
-    if (options.heat) this.drawHeat(data, options.heatFilter, options.heatMetric);
+    this.hits = [];
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.save();
+    this.ctx.translate(this.viewport.x, this.viewport.y);
+    this.ctx.scale(this.viewport.scale, this.viewport.scale);
+    this.drawGrid();
+    if (options.heat) this.drawHeat(data, options.heatFilter, options.heatMetric, options.heatOpacity);
     if (options.paths) this.drawPaths(data);
-    if (options.stuck) data.stuck.slice(0, 12).forEach((value) => this.circle(value, 8 + Math.min(10, Math.log2(value.events + 1) * 2), '#ffbf47cc', `${value.events} stuck event(s) · ${Math.round(value.duration)} seconds`, '#fff0bd'));
-    if (options.congestion) data.congestion.slice(0, 12).forEach((value) => this.circle(value, 10 + Math.min(14, value.max_vehicles * 2), '#ff5263b8', `${value.events} congestion event(s) · up to ${value.max_vehicles} vehicles`, '#ff9ba5'));
+    if (options.stuck) data.stuck.slice(0, 12).forEach((value) => this.circle(value, 8 + Math.min(10, Math.log2(value.events + 1) * 2), '#ffbf47cc', `${value.events} stuck event(s) · ${Math.round(value.duration)} seconds`, '#fff0bd', 'Stuck'));
+    if (options.congestion) data.congestion.slice(0, 12).forEach((value) => this.circle(value, 10 + Math.min(14, value.max_vehicles * 2), '#ff5263b8', `${value.events} congestion event(s) · up to ${value.max_vehicles} vehicles`, '#ff9ba5', 'Congestion'));
     if (options.vehicles) {
       const visibleVehicles = options.stateFilter === 'all'
         ? data.latest
@@ -353,17 +516,20 @@ export class WarehouseMap {
     if (options.tags) this.drawUwbTags();
     this.drawFocus();
     this.drawVehicleFocus(data);
+    this.ctx.restore();
   }
 
   focusAt(value) {
     this.focused = value;
     this.focusedVehicle = null;
+    this.revealPoint(value);
     if (this.lastData && this.lastOptions) this.draw(this.lastData, this.lastOptions);
   }
 
   focusVehicle(vehicleId) {
     this.focused = null;
     this.focusedVehicle = vehicleId;
+    this.revealPoint(this.lastData?.latest?.find((vehicle) => vehicle.vehicle_id === vehicleId));
     if (this.lastData && this.lastOptions) this.draw(this.lastData, this.lastOptions);
   }
 
@@ -374,28 +540,17 @@ export class WarehouseMap {
   drawFocus() {
     if (!this.focused || !Number.isFinite(Number(this.focused.x)) || !Number.isFinite(Number(this.focused.y))) return;
     const { x, y } = this.project(Number(this.focused.x), Number(this.focused.y));
-    const color = this.focused.type === 'Congestion'
-      ? '#ff5263'
-      : this.focused.type === 'Heat area' ? '#3da4ff' : '#ffbf47';
-    const label = this.focused.type === 'Heat area'
-      ? 'Selected heat area'
-      : `${this.focused.type} · ${this.focused.events} event(s)`;
+    const color = this.focused.type === 'Congestion' ? '#cb5b51' : this.focused.type === 'Heat area' ? '#3777b0' : '#c28c30';
+    const label = this.focused.type === 'Heat area' ? 'Selected heat area' : `${this.focused.type} · ${this.focused.events} event(s)`;
+    const unit = this.markerUnit();
     this.ctx.save();
     this.ctx.strokeStyle = color;
-    this.ctx.lineWidth = 3;
-    this.ctx.shadowColor = color;
-    this.ctx.shadowBlur = 14;
-    this.ctx.beginPath(); this.ctx.arc(x, y, 20, 0, Math.PI * 2); this.ctx.stroke();
-    this.ctx.shadowBlur = 0;
-    this.ctx.beginPath(); this.ctx.moveTo(x - 30, y); this.ctx.lineTo(x + 30, y); this.ctx.moveTo(x, y - 30); this.ctx.lineTo(x, y + 30); this.ctx.stroke();
-    this.ctx.font = 'bold 11px system-ui';
-    const width = this.ctx.measureText(label).width + 14;
-    this.ctx.fillStyle = '#07111aeb';
-    this.ctx.fillRect(x - width / 2, y + 27, width, 18);
-    this.ctx.fillStyle = '#f2f7fa';
-    this.ctx.textAlign = 'center'; this.ctx.fillText(label, x, y + 40); this.ctx.textAlign = 'start';
+    this.ctx.lineWidth = 2 * unit;
+    this.ctx.beginPath(); this.ctx.arc(x, y, 15 * unit, 0, Math.PI * 2); this.ctx.stroke();
+    this.ctx.setLineDash([3 * unit, 4 * unit]);
+    this.ctx.beginPath(); this.ctx.arc(x, y, 21 * unit, 0, Math.PI * 2); this.ctx.stroke();
     this.ctx.restore();
-    this.hits.push({ x, y, radius: 32, priority: 4, label: `${label} · x ${Number(this.focused.x).toFixed(2)}, y ${Number(this.focused.y).toFixed(2)}` });
+    this.hits.push({ x, y, radius: 22 * unit, priority: 1, label: `${label} · x ${Number(this.focused.x).toFixed(2)}, y ${Number(this.focused.y).toFixed(2)}` });
   }
 
   drawVehicleFocus(data) {
@@ -405,22 +560,20 @@ export class WarehouseMap {
     const point = vehicle || (track?.points?.length ? { x: track.points.at(-1)[0], y: track.points.at(-1)[1] } : null);
     if (!point) return;
     const { x, y } = this.project(Number(point.x), Number(point.y));
+    const unit = this.markerUnit();
     this.ctx.save();
-    this.ctx.strokeStyle = '#b06cff'; this.ctx.lineWidth = 3; this.ctx.shadowColor = '#b06cff'; this.ctx.shadowBlur = 16;
-    this.ctx.beginPath(); this.ctx.arc(x, y, 22, 0, Math.PI * 2); this.ctx.stroke();
-    this.ctx.shadowBlur = 0; this.ctx.font = 'bold 11px system-ui';
-    const label = `${this.focusedVehicle} path`;
-    const width = this.ctx.measureText(label).width + 14;
-    this.ctx.fillStyle = '#07111aeb'; this.ctx.fillRect(x - width / 2, y + 28, width, 18);
-    this.ctx.fillStyle = '#f2f7fa'; this.ctx.textAlign = 'center'; this.ctx.fillText(label, x, y + 41); this.ctx.textAlign = 'start';
+    this.ctx.strokeStyle = '#176f56'; this.ctx.lineWidth = 2 * unit;
+    this.ctx.beginPath(); this.ctx.arc(x, y, 13 * unit, 0, Math.PI * 2); this.ctx.stroke();
     this.ctx.restore();
-    this.hits.push({ x, y, radius: 34, priority: 4, label: `${label} · x ${Number(point.x).toFixed(2)}, y ${Number(point.y).toFixed(2)}` });
+    this.hits.push({ x, y, radius: 16 * unit, priority: 4, vehicleId: this.focusedVehicle,
+      label: `${this.focusedVehicle} · selected route` });
   }
 
   hitAt(event, heatOnly = false) {
     const box = this.canvas.getBoundingClientRect();
-    const x = (event.clientX - box.left) * this.canvas.width / box.width;
-    const y = (event.clientY - box.top) * this.canvas.height / box.height;
+    const screenX = (event.clientX - box.left) * this.canvas.width / box.width;
+    const screenY = (event.clientY - box.top) * this.canvas.height / box.height;
+    const { x, y } = this.viewport.unproject(screenX, screenY);
     return this.hits
       .filter((item) => !heatOnly || item.heatValue)
       .map((item) => ({ ...item, distance: Math.hypot(item.x - x, item.y - y) }))
@@ -431,6 +584,15 @@ export class WarehouseMap {
       ))[0];
   }
 
+  selectItem(event) {
+    if (this.suppressClick) { this.suppressClick = false; return; }
+    const hit = this.hitAt(event);
+    if (hit?.vehicleId && this.onVehicleSelect) this.onVehicleSelect(hit.vehicleId);
+    else if (hit?.eventValue && this.onEventSelect) this.onEventSelect(hit.eventValue, hit.eventType);
+    else this.selectHeat(event);
+    this.tooltip.style.display = 'none';
+  }
+
   selectHeat(event) {
     const hit = this.hitAt(event, true);
     if (!hit || !this.onHeatSelect) return;
@@ -439,6 +601,7 @@ export class WarehouseMap {
   }
 
   showTooltip(event) {
+    if (this.drag?.moved) return;
     const hit = this.hitAt(event);
     if (!hit) { this.tooltip.style.display = 'none'; return; }
     this.tooltip.textContent = hit.label; this.tooltip.style.display = 'block';

@@ -37,6 +37,26 @@ export async function setSimulationFault(faultRequest) {
   }
   return state;
 }
+
+export async function getSideTasks() {
+  const state = await request('/api/tasks/side-work');
+  if (!state.simulation_only || !Array.isArray(state.statuses)) {
+    throw new Error('Side-work task control unavailable');
+  }
+  return state;
+}
+
+export async function setSideTask(taskRequest) {
+  const state = await request('/api/tasks/side-work', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(taskRequest),
+  });
+  if (!state.simulation_only || !state.requested || !Array.isArray(state.statuses)) {
+    throw new Error('Side-work task request was not accepted');
+  }
+  return state;
+}
 export async function getState(query) {
   const state = await request(`/api/state?${new URLSearchParams(query)}`);
   if (!Array.isArray(state.latest) || !Array.isArray(state.density)) {

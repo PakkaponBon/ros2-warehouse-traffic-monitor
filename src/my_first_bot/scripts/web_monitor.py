@@ -22,6 +22,7 @@ import yaml
 
 from grid_planner import OccupancyGridPlanner
 from simulation_faults import validate_fault_request, vehicle_names
+from traffic_simulator import parse_side_task_request
 from traffic_common import (
     iso_time,
     motion_state_is_problem,
@@ -125,6 +126,12 @@ class MonitorHandler(BaseHTTPRequestHandler):
                 self._send(200, "application/json", json.dumps(payload).encode())
             except Exception as error:
                 self._send(500, "application/json", json.dumps({"ok": False, "error": str(error)}).encode())
+        elif parsed.path == "/api/tasks/side-work":
+            try:
+                payload = self.monitor.side_task_snapshot()
+                self._send(200, "application/json", json.dumps(payload).encode())
+            except Exception as error:
+                self._send(500, "application/json", json.dumps({"error": str(error)}).encode())
         elif parsed.path == "/api/debug":
             try:
                 payload = self.monitor.debug_snapshot(parse_qs(parsed.query))
@@ -140,7 +147,11 @@ class MonitorHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path not in {"/api/routes/suggest", "/api/simulation/faults"}:
+        if parsed.path not in {
+            "/api/routes/suggest",
+            "/api/simulation/faults",
+            "/api/tasks/side-work",
+        }:
             self._send(404, "application/json", b'{"error":"not found"}')
             return
         try:
@@ -150,8 +161,10 @@ class MonitorHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if parsed.path == "/api/routes/suggest":
                 result = self.monitor.suggest_route(payload)
-            else:
+            elif parsed.path == "/api/simulation/faults":
                 result = self.monitor.set_simulation_fault(payload)
+            else:
+                result = self.monitor.set_side_task(payload)
             self._send(200, "application/json", json.dumps(result).encode())
         except PermissionError as error:
             self._send(403, "application/json", json.dumps({"error": str(error)}).encode())
@@ -193,6 +206,7 @@ class WebMonitor(Node):
         self.declare_parameter("health_offline_after", 15.0)
         self.declare_parameter("software_version", "0.0.0")
         self.declare_parameter("enable_simulation_faults", False)
+        self.declare_parameter("enable_side_tasks", False)
         self.declare_parameter("web_root", "")
         self.declare_parameter("route_planning_resolution", 0.30)
         self.declare_parameter("route_robot_radius", 0.55)
@@ -215,6 +229,13 @@ class WebMonitor(Node):
         )
         self.active_simulation_faults = {}
         self.last_simulation_fault_action = None
+        self.side_tasks_enabled = bool(
+            self.get_parameter("enable_side_tasks").value
+        )
+        self.side_task_status = {}
+        self.task_request_publisher = self.create_publisher(
+            String, "/traffic/task_request", 10
+        )
         self.fault_state_publisher = None
         self.fault_action_publisher = None
         self.validation_subscriptions = []
@@ -235,6 +256,17 @@ class WebMonitor(Node):
                     10,
                 )
             )
+            if vehicle_name != "my_robot":
+                self.validation_subscriptions.append(
+                    self.create_subscription(
+                        String,
+                        f"/traffic/{vehicle_name}/task_status",
+                        lambda message, name=vehicle_name: self._on_side_task_status(
+                            name, message
+                        ),
+                        10,
+                    )
+                )
             self.validation_subscriptions.append(
                 self.create_subscription(
                     String,
@@ -481,6 +513,45 @@ class WebMonitor(Node):
                 String(data=json.dumps(request, separators=(",", ":")))
             )
         return self._fault_snapshot()
+
+    def _on_side_task_status(self, vehicle_name, message):
+        """Cache the latest side-work state published by the controller."""
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(payload, dict):
+            return
+        payload["vehicle_id"] = vehicle_name
+        payload["received_at"] = time.time()
+        with self.lock:
+            self.side_task_status[vehicle_name] = payload
+
+    def side_task_snapshot(self, requested=None):
+        """Return the latest controller acknowledgement for each vehicle."""
+        with self.lock:
+            statuses = [
+                {key: value for key, value in payload.items() if key != "received_at"}
+                for _name, payload in sorted(self.side_task_status.items())
+            ]
+        return {
+            "enabled": self.side_tasks_enabled,
+            "simulation_only": True,
+            "requested": requested,
+            "statuses": statuses,
+        }
+
+    def set_side_task(self, payload):
+        """Publish one validated simulation side-work assignment or cancellation."""
+        if not self.side_tasks_enabled:
+            raise PermissionError("side-work task control is disabled")
+        request = parse_side_task_request(
+            json.dumps(payload), self.simulation_vehicle_names
+        )
+        self.task_request_publisher.publish(
+            String(data=json.dumps(request, separators=(",", ":")))
+        )
+        return self.side_task_snapshot(requested=request)
 
     def _validation_snapshot(self):
         """Return fresh diagnostics and summary counts; these are live only."""

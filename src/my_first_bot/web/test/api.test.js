@@ -5,7 +5,9 @@ import {
   getHealth,
   getMap,
   getRouteSuggestion,
+  getSideTasks,
   getState,
+  setSideTask,
   setSimulationFault,
 } from '../src/api.js';
 
@@ -86,4 +88,28 @@ test('getRouteSuggestion posts an advisory route request', async () => {
   assert.equal(request.path, '/api/routes/suggest');
   assert.equal(request.options.method, 'POST');
   assert.equal(JSON.parse(request.options.body).vehicle_id, 'vehicle_1');
+});
+
+
+test('side-work API publishes and reads task status', async () => {
+  const requests = [];
+  globalThis.fetch = async (path, options = {}) => {
+    requests.push({ path, options });
+    return new Response(JSON.stringify({
+      enabled: true,
+      simulation_only: true,
+      requested: options.method === 'POST'
+        ? { vehicle_id: 'vehicle_2', action: 'assign' }
+        : null,
+      statuses: [],
+    }));
+  };
+
+  await setSideTask({ vehicle_id: 'vehicle_2', x: 3, y: 4, dwell_seconds: 10 });
+  await getSideTasks();
+
+  assert.equal(requests[0].path, '/api/tasks/side-work');
+  assert.equal(requests[0].options.method, 'POST');
+  assert.equal(JSON.parse(requests[0].options.body).dwell_seconds, 10);
+  assert.equal(requests[1].path, '/api/tasks/side-work');
 });

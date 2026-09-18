@@ -23,6 +23,9 @@ def make_monitor(database):
     )
     monitor.active_simulation_faults = {}
     monitor.last_simulation_fault_action = None
+    monitor.side_tasks_enabled = False
+    monitor.side_task_status = {}
+    monitor.task_request_publisher = None
     monitor.fault_state_publisher = None
     monitor.fault_action_publisher = None
     parameters = {
@@ -280,4 +283,38 @@ def test_simulation_fault_control_is_guarded_and_publishes_full_state(tmp_path):
     )
     assert result["last_action"]["status"] == "requested"
     assert '"action":"teleport"' in monitor.fault_action_publisher.messages[-1]
+    monitor.connection.close()
+
+
+def test_side_task_control_is_guarded_and_publishes_valid_request(tmp_path):
+    class Publisher:
+        def __init__(self):
+            self.messages = []
+
+        def publish(self, message):
+            self.messages.append(message.data)
+
+    monitor = make_monitor(tmp_path / "traffic.db")
+    try:
+        monitor.set_side_task(
+            {"vehicle_id": "vehicle_2", "x": 4.0, "y": 5.0}
+        )
+    except PermissionError as error:
+        assert "disabled" in str(error)
+    else:
+        raise AssertionError("disabled side-task endpoint accepted a command")
+
+    monitor.side_tasks_enabled = True
+    monitor.task_request_publisher = Publisher()
+    result = monitor.set_side_task(
+        {
+            "vehicle_id": "vehicle_2",
+            "x": 4.0,
+            "y": 5.0,
+            "dwell_seconds": 15,
+        }
+    )
+    assert result["simulation_only"] is True
+    assert result["requested"]["vehicle_id"] == "vehicle_2"
+    assert '"dwell_seconds":15.0' in monitor.task_request_publisher.messages[-1]
     monitor.connection.close()

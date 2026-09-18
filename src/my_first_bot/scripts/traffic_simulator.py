@@ -47,6 +47,50 @@ def resolve_random_vehicle(configured, names):
     return value
 
 
+def parse_side_task_request(message_data, allowed_vehicles):
+    """Validate a JSON side-work assignment or cancellation request."""
+    try:
+        payload = json.loads(message_data)
+    except (TypeError, ValueError) as error:
+        raise ValueError("side-task request must contain valid JSON") from error
+    if not isinstance(payload, dict):
+        raise ValueError("side-task request must be a JSON object")
+
+    action = str(payload.get("action", "assign")).strip().lower()
+    if action not in {"assign", "cancel"}:
+        raise ValueError("side-task action must be 'assign' or 'cancel'")
+    vehicle_id = str(payload.get("vehicle_id", "")).strip()
+    if vehicle_id not in set(allowed_vehicles):
+        raise ValueError(f"vehicle_id '{vehicle_id}' is not configured")
+    request = {"action": action, "vehicle_id": vehicle_id}
+    if action == "cancel":
+        return request
+
+    try:
+        x = float(payload["x"])
+        y = float(payload["y"])
+        dwell_seconds = float(payload.get("dwell_seconds", 5.0))
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("side-task assignment requires numeric x and y") from error
+    if not math.isfinite(x) or not math.isfinite(y):
+        raise ValueError("side-task x and y must be finite")
+    if not math.isfinite(dwell_seconds) or not 0.0 <= dwell_seconds <= 3600.0:
+        raise ValueError("dwell_seconds must be between 0 and 3600")
+    task_id = str(payload.get("task_id", "")).strip()
+    if len(task_id) > 80:
+        raise ValueError("task_id must not exceed 80 characters")
+    request.update(
+        {
+            "x": x,
+            "y": y,
+            "dwell_seconds": dwell_seconds,
+            "task_id": task_id,
+            "replace": bool(payload.get("replace", False)),
+        }
+    )
+    return request
+
+
 class TrafficSimulator(Node):
     """Drive existing `vehicle_N` Gazebo models for repeatable traffic."""
 
@@ -193,6 +237,11 @@ class TrafficSimulator(Node):
         self.localization_readiness = {}
         self.injected_faults = {}
         self.states = {}
+        self.task_sequence = 0
+        self.task_event_publisher = self.create_publisher(
+            String, "/traffic/task_status", 10
+        )
+        self.task_status_publishers = {}
         now = time.monotonic()
         for index in range(1, self.vehicle_count + 1):
             point = self.starts[index - 1]
@@ -214,6 +263,9 @@ class TrafficSimulator(Node):
             )
             self.state_publishers[name] = self.create_publisher(
                 String, f"/traffic/{name}/motion_state", 10
+            )
+            self.task_status_publishers[name] = self.create_publisher(
+                String, f"/traffic/{name}/task_status", 10
             )
             if self.pose_source == "amcl":
                 self.pose_subscriptions.append(
@@ -262,11 +314,18 @@ class TrafficSimulator(Node):
                 "navigation_mode": navigation_mode,
                 "fixed_route": fixed_route,
                 "fixed_route_index": 0,
+                "side_task": None,
             }
         self.create_subscription(
             String,
             "/traffic/simulation_faults",
             self.on_simulation_faults,
+            10,
+        )
+        self.create_subscription(
+            String,
+            "/traffic/task_request",
+            self.on_side_task_request,
             10,
         )
         self.create_timer(self.period, self.step)
@@ -295,6 +354,86 @@ class TrafficSimulator(Node):
     def on_simulation_faults(self, message):
         """Apply the latest complete simulation fault registry."""
         self.injected_faults = parse_fault_state(message.data, self.states)
+
+    def _publish_task_status(self, name, task, status, reason=""):
+        """Publish one fleet-wide and per-vehicle task transition."""
+        payload = {
+            "vehicle_id": name,
+            "task_id": None if task is None else task.get("task_id"),
+            "status": status,
+            "reason": reason,
+            "destination": (
+                None
+                if task is None
+                else {"x": task["destination"][0], "y": task["destination"][1]}
+            ),
+            "observed_at": time.time(),
+        }
+        message = String(data=json.dumps(payload, separators=(",", ":")))
+        self.task_event_publisher.publish(message)
+        if name in self.task_status_publishers:
+            self.task_status_publishers[name].publish(message)
+
+    def on_side_task_request(self, message):
+        """Temporarily divert one vehicle, then return it to its own route."""
+        try:
+            request = parse_side_task_request(message.data, self.states)
+        except ValueError as error:
+            self.get_logger().warning(f"Rejected side-task request: {error}")
+            return
+
+        name = request["vehicle_id"]
+        state = self.states[name]
+        active = state["side_task"]
+        if request["action"] == "cancel":
+            if active is None:
+                self._publish_task_status(name, None, "rejected", "no_active_task")
+                return
+            state["side_task"] = None
+            state["path"] = []
+            state["path_index"] = 0
+            state["goal"] = None
+            state["last_replan"] = 0.0
+            self._publish_task_status(name, active, "cancelled", "operator_request")
+            self.get_logger().info(f"Cancelled side task {active['task_id']} for {name}")
+            return
+
+        if not self.map_navigation:
+            self._publish_task_status(name, None, "rejected", "map_navigation_disabled")
+            return
+        if active is not None and not request["replace"]:
+            self._publish_task_status(name, active, "rejected", "task_already_active")
+            return
+        if active is not None:
+            self._publish_task_status(name, active, "cancelled", "replaced")
+
+        self.task_sequence += 1
+        task_id = request["task_id"] or f"side-{self.task_sequence}"
+        route = state["fixed_route"]
+        if state["navigation_mode"] == "fixed" and route:
+            resume_goal = route[state["fixed_route_index"]]
+        else:
+            resume_goal = state["goal"] or (state["x"], state["y"])
+        task = {
+            "task_id": task_id,
+            "destination": (request["x"], request["y"]),
+            "dwell_seconds": request["dwell_seconds"],
+            "phase": "outbound",
+            "work_until": None,
+            "resume_goal": resume_goal,
+        }
+        state["side_task"] = task
+        state["path"] = []
+        state["path_index"] = 0
+        state["goal"] = None
+        state["blocked_since"] = None
+        state["last_replan"] = 0.0
+        self._publish_task_status(name, task, "assigned")
+        self.get_logger().info(
+            f"Assigned side task {task_id} to {name}: "
+            f"({request['x']:.1f}, {request['y']:.1f}) for "
+            f"{request['dwell_seconds']:.1f}s"
+        )
 
     @staticmethod
     def _sector_min(message, minimum_angle, maximum_angle):
@@ -428,12 +567,57 @@ class TrafficSimulator(Node):
         )
         return True
 
+    def _plan_side_task_route(self, name, state, now):
+        """Plan the outbound or return leg of an active side-work task."""
+        task = state["side_task"]
+        if task is None or task["phase"] == "working":
+            return False
+        requested_goal = (
+            task["destination"]
+            if task["phase"] == "outbound"
+            else task["resume_goal"]
+        )
+        dynamic = [
+            (position[0], position[1])
+            for other_name, position in self.observed.items()
+            if other_name != name
+        ]
+        path, goal = self.planner.path_to_goal(
+            (state["x"], state["y"]), requested_goal, dynamic
+        )
+        state["path"] = path
+        state["path_index"] = 0
+        state["goal"] = goal
+        state["last_replan"] = now
+        if not path:
+            self._publish_task_status(name, task, "planning", "route_unavailable")
+            self.get_logger().warning(
+                f"No {task['phase']} route for side task {task['task_id']} "
+                f"assigned to {name}; it will retry"
+            )
+            return False
+        state["target"] = path[0]
+        self.get_logger().info(
+            f"{name} side task {task['task_id']} {task['phase']}: "
+            f"({goal[0]:.1f}, {goal[1]:.1f}), {len(path)} path segment(s)"
+        )
+        return True
+
     def _plan_map_route(self, name, state, now):
+        if state["side_task"] is not None:
+            return self._plan_side_task_route(name, state, now)
         if state["navigation_mode"] == "random":
             return self._plan_random_route(name, state, now)
         return self._plan_fixed_route(name, state, now)
 
     def _map_target(self, name, state, now):
+        task = state["side_task"]
+        if task is not None and task["phase"] == "working":
+            if now < task["work_until"]:
+                return None
+            task["phase"] = "returning"
+            state["last_replan"] = 0.0
+            self._publish_task_status(name, task, "returning")
         if not state["path"]:
             if now - state["last_replan"] < 1.0:
                 return None
@@ -446,6 +630,20 @@ class TrafficSimulator(Node):
                 return target
             state["path_index"] += 1
         state["path"] = []
+        task = state["side_task"]
+        if task is not None and task["phase"] == "outbound":
+            task["phase"] = "working"
+            task["work_until"] = now + task["dwell_seconds"]
+            self._publish_task_status(name, task, "working")
+            return None
+        if task is not None and task["phase"] == "returning":
+            self._publish_task_status(name, task, "completed")
+            self.get_logger().info(
+                f"{name} completed side task {task['task_id']} and resumed its route"
+            )
+            state["side_task"] = None
+            state["goal"] = None
+            state["last_replan"] = 0.0
         if not self._plan_map_route(name, state, now):
             return None
         return state["target"]
@@ -495,7 +693,14 @@ class TrafficSimulator(Node):
                     continue
                 target = self._map_target(name, state, now)
                 if target is None:
-                    self._publish_control(name, motion_state="planning")
+                    task = state["side_task"]
+                    if task is not None and task["phase"] == "working":
+                        motion_state = "side_work"
+                    elif task is not None:
+                        motion_state = "task_planning"
+                    else:
+                        motion_state = "planning"
+                    self._publish_control(name, motion_state=motion_state)
                     continue
                 target_x, target_y = target
             else:
@@ -653,6 +858,11 @@ class TrafficSimulator(Node):
                 motion_state = "moving"
             else:
                 motion_state = "stalled"
+            task = state["side_task"]
+            if task is not None and motion_state == "moving":
+                motion_state = (
+                    "side_task" if task["phase"] == "outbound" else "returning_route"
+                )
             self._publish_control(name, speed, turn, motion_state)
 
 

@@ -8,6 +8,10 @@ const vehicleLabel = (vehicle) => vehicle.vehicle_id === 'my_robot'
 
 const MOTION_STATES = {
   moving: ['Moving', 'moving'],
+  side_task: ['Travelling to side task', 'moving'],
+  returning_route: ['Returning to normal route', 'moving'],
+  side_work: ['Performing side work', 'waiting'],
+  task_planning: ['Planning side-task route', 'idle'],
   turning: ['Turning normally', 'turning'],
   waiting_vehicle: ['Waiting for vehicle', 'waiting'],
   blocked_obstacle: ['Blocked by obstacle', 'blocked'],
@@ -29,20 +33,14 @@ function motionPresentation(vehicle) {
 
 export function renderMetrics(root, data) {
   const moving = data.latest.filter((vehicle) => (
-    motionPresentation(vehicle).state === 'moving'
+    motionPresentation(vehicle).className === 'moving'
   )).length;
-  const localization = data.localization?.summary;
-  const localizationValue = localization?.samples
-    ? `${localization.mean_error.toFixed(2)} m`
-    : '—';
   root.innerHTML = [
-    ['samples', data.samples.toLocaleString(), 'Position samples', ''],
-    ['vehicles', data.latest.length, 'Active vehicles', 'teal'],
-    ['moving', moving, 'Moving now', 'teal'],
-    ['stuck', data.stuck.length, 'Stuck hotspots', 'orange'],
-    ['congestion', data.congestion.length, 'Congestion hotspots', 'red'],
-    ['localization', localizationValue, 'Mean AMCL error', 'teal'],
-  ].map((metric) => `<article class="metric ${metric[3]}"><strong>${metric[1]}</strong><span>${metric[2]}</span></article>`).join('');
+    ['vehicles', data.latest.length, 'Vehicles tracked', '', 'At the end of this window'],
+    ['moving', moving, 'Moving', 'teal', 'At the end of this window'],
+    ['stuck', data.stuck.length, 'Stuck locations', 'orange', 'In this traffic window'],
+    ['congestion', data.congestion.length, 'Congestion areas', 'red', 'In this traffic window'],
+  ].map((metric) => `<article class="metric ${metric[3]}"><span>${metric[2]}</span><strong>${metric[1]}</strong><small>${metric[4]}</small></article>`).join('');
 }
 
 export function renderVehicleSummary(root, vehicles, localizationVehicles = []) {
@@ -159,13 +157,13 @@ export function renderAnalytics(root, analytics) {
     : 'No slow/stuck interval in this range';
   root.innerHTML = `
     <div class="insight-row ${location ? 'insight-action' : ''}" ${location ? `data-insight="stuck" role="button" tabindex="0" data-x="${location.x}" data-y="${location.y}" data-events="${location.events}" data-first="${location.first_started || ''}" data-last="${location.last_ended || ''}"` : ''}>
-      <i class="insight-icon orange">!</i><div><b>Most stuck position</b><small>${location ? `x ${location.x.toFixed(2)} · y ${location.y.toFixed(2)} · ${location.events} event(s)` : 'No stuck position recorded'}</small>${location ? `<em>${timeRange(location.first_started, location.last_ended)}</em>` : ''}</div>
+      <i class="insight-icon orange">!</i><div><b>Most frequent stop</b><small>${location ? `x ${location.x.toFixed(2)} · y ${location.y.toFixed(2)} · ${location.events} event(s)` : 'No stuck position recorded'}</small>${location ? `<em>${timeRange(location.first_started, location.last_ended)}</em>` : ''}</div>
     </div>
     <div class="insight-row ${path ? 'insight-action' : ''}" ${path ? `data-insight="path" role="button" tabindex="0" data-vehicle="${escapeHtml(path.vehicle_id)}"` : ''}>
-      <i class="insight-icon red">↝</i><div><b>Worst vehicle path</b><small>${path ? `${escapeHtml(path.vehicle_id)} · ${path.reason}` : 'No vehicle path recorded'}</small>${path ? `<em>${path.distance_m.toFixed(1)} m travelled · ${path.slow_seconds.toFixed(0)} s slow</em>` : ''}</div>
+      <i class="insight-icon red">↝</i><div><b>Route with most delays</b><small>${path ? `${escapeHtml(path.vehicle_id)} · ${path.reason}` : 'No vehicle path recorded'}</small>${path ? `<em>${path.distance_m.toFixed(1)} m travelled · ${path.slow_seconds.toFixed(0)} s slow</em>` : ''}</div>
     </div>
     <div class="insight-row ${path ? 'insight-action' : ''}" ${path ? `data-insight="window" role="button" tabindex="0" data-vehicle="${escapeHtml(path.vehicle_id)}"` : ''}>
-      <i class="insight-icon blue">◷</i><div><b>Bad path window</b><small>${path ? timeRange(path.bad_when_start, path.bad_when_end) : 'No bad interval found'}</small>${path ? `<em>Average speed ${path.average_speed.toFixed(2)} m/s</em>` : ''}</div>
+      <i class="insight-icon blue">◷</i><div><b>When delays happened</b><small>${path ? timeRange(path.bad_when_start, path.bad_when_end) : 'No delay interval recorded'}</small>${path ? `<em>Average speed ${path.average_speed.toFixed(2)} m/s</em>` : ''}</div>
     </div>`;
 }
 
@@ -191,7 +189,7 @@ export function renderHeatAreaSummary(root, value, metric = 'count') {
   ));
   const slowIds = new Set(peak?.slow_vehicle_ids || []);
   const normalVehicles = peakVehicles.filter((vehicleId) => !slowIds.has(vehicleId));
-  const peakValue = Number(peak?.[metric] || 0);
+  const peakValue = peak ? Number(peak[metric] || 0) : '—';
   const stuckText = stuck?.events
     ? `${stuck.events} event(s), ${stuck.vehicles} vehicle(s)${stuck.peak ? ` · busiest ${formatWindow(stuck.peak)}` : ''}`
     : 'None in this selected time range';
@@ -202,7 +200,7 @@ export function renderHeatAreaSummary(root, value, metric = 'count') {
       <div><small>${metricLabel}</small><strong>${Number(value[metric] || 0)}</strong><span>whole selected range</span></div>
       <div><small>Average speed</small><strong>${Number(value.average_speed || 0).toFixed(2)} m/s</strong><span>in this area</span></div>
       <div><small>Busiest period</small><strong>${peakValue}</strong><span>${metricUnit}</span></div>
-      <div><small>Slow at busiest time</small><strong>${Number(peak?.slow_samples || 0)}</strong><span>samples</span></div>
+      <div><small>Slow at busiest time</small><strong>${peak ? Number(peak.slow_samples || 0) : '—'}</strong><span>samples</span></div>
     </div>
     <dl class="heat-area-details">
       <div><dt>Busiest time</dt><dd>${formatWindow(peak)}</dd></div>
