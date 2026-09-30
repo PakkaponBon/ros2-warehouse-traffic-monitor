@@ -21,6 +21,7 @@ def render_model(template, namespace, vehicle_name):
         "__ODOM_FRAME__": f"{frame_prefix}/odom",
         "__BASE_FRAME__": f"{frame_prefix}/base_link",
         "__LASER_FRAME__": f"{frame_prefix}/laser",
+        "__M300_FRAME__": f"{frame_prefix}/m300_lidar",
     }
     rendered = template
     for marker, value in replacements.items():
@@ -124,7 +125,7 @@ class LocalizedVehicleSpawner(Node):
         if not response.success:
             raise RuntimeError(f"Gazebo refused {entity}: {response.status_message}")
         self.get_logger().info(
-            f"Spawned {entity} with 2-D LiDAR at ({request.initial_pose.position.x:.1f}, "
+            f"Spawned {entity} at ({request.initial_pose.position.x:.1f}, "
             f"{request.initial_pose.position.y:.1f})"
         )
 

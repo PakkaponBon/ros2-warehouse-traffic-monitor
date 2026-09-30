@@ -1,4 +1,4 @@
-"""Run the realistic warehouse with localized forklift traffic."""
+"""Run the realistic warehouse with an M300-like LiDAR on vehicle_1."""
 
 from pathlib import Path
 import time
@@ -13,7 +13,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    package_share = Path(get_package_share_directory("my_first_bot"))
+    package_share = Path(get_package_share_directory("warehouse_2d"))
     warehouse_runtime = package_share / "launch" / "warehouse_runtime.launch.py"
     world = LaunchConfiguration("world")
     map_yaml = LaunchConfiguration("map")
@@ -46,6 +46,12 @@ def generate_launch_description():
     traffic_model = (
         package_share / "models" / "traffic_vehicle" / "localized_vehicle.sdf.in"
     )
+    m300_traffic_model = (
+        package_share
+        / "models"
+        / "traffic_vehicle"
+        / "localized_vehicle_m300.sdf.in"
+    )
     traffic_starts = (
         (-16.0, -18.0, 0.0),
         (-4.0, -18.0, 0.0),
@@ -63,6 +69,22 @@ def generate_launch_description():
         condition = IfCondition(
             PythonExpression([vehicle_count, " >= ", str(index)])
         )
+        if index == 1:
+            traffic_nodes.append(
+                Node(
+                    package="tf2_ros",
+                    executable="static_transform_publisher",
+                    name="vehicle_1_m300_transform",
+                    arguments=[
+                        "--x", "-0.12", "--y", "0", "--z", "0.84",
+                        "--yaw", "0", "--pitch", "0", "--roll", "0",
+                        "--frame-id", "vehicle_1/base_link",
+                        "--child-frame-id", "vehicle_1/m300_lidar",
+                    ],
+                    condition=condition,
+                    output="screen",
+                )
+            )
         traffic_nodes.extend(
             [
                 Node(
@@ -151,14 +173,16 @@ def generate_launch_description():
                 period=3.0 + index * 0.15,
                 actions=[
                     Node(
-                        package="my_first_bot",
+                        package="warehouse_2d",
                         executable="spawn_localized_vehicle.py",
                         name=f"spawn_{name}",
                         parameters=[
                             {
                                 "entity": name,
                                 "robot_namespace": f"/{namespace}",
-                                "template": str(traffic_model),
+                                "template": str(
+                                    m300_traffic_model if index == 1 else traffic_model
+                                ),
                                 "x": x,
                                 "y": y,
                                 "z": 0.3,
@@ -274,7 +298,10 @@ def generate_launch_description():
                     "spawn_robot": "false",
                     "gui": gui,
                     "use_web": use_web,
-                    "use_rviz": use_rviz,
+                    # This launch starts its own M300-specific RViz profile
+                    # below. Do not let the shared runtime open the ordinary
+                    # warehouse profile, which does not display the 3-D cloud.
+                    "use_rviz": "false",
                     "database": database,
                     "web_port": web_port,
                     "vehicle_count": vehicle_count,
@@ -299,29 +326,58 @@ def generate_launch_description():
                 }.items(),
             ),
             Node(
-                package="pointcloud_to_laserscan",
-                executable="pointcloud_to_laserscan_node",
-                name="warehouse_pointcloud_to_scan",
-                remappings=[("cloud_in", "/points"), ("scan", "/scan")],
+                package="warehouse_2d",
+                executable="m300_pattern_emulator.py",
+                name="m300_pattern_emulator",
                 parameters=[
                     {
                         "use_sim_time": True,
-                        "target_frame": "lidar_link",
-                        "min_height": 0.10,
-                        "max_height": 0.50,
+                        "input_topic": "/traffic/vehicle_1/m300/raw_points",
+                        "output_topic": "/traffic/vehicle_1/m300/pointcloud",
+                        "target_points_per_second": 154600.0,
+                        "nominal_output_rate": 8.0,
+                        "minimum_range": 0.20,
+                        "maximum_range": 50.0,
+                    }
+                ],
+                output="screen",
+            ),
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                name="m300_pattern_rviz",
+                arguments=["-d", str(package_share / "rviz" / "m300_pattern.rviz")],
+                parameters=[{"use_sim_time": True}],
+                condition=IfCondition(use_rviz),
+                output="screen",
+            ),
+            Node(
+                package="pointcloud_to_laserscan",
+                executable="pointcloud_to_laserscan_node",
+                name="m300_pointcloud_to_scan",
+                remappings=[
+                    ("cloud_in", "/traffic/vehicle_1/m300/pointcloud"),
+                    ("scan", "/traffic/vehicle_1/m300/scan"),
+                ],
+                parameters=[
+                    {
+                        "use_sim_time": True,
+                        "target_frame": "vehicle_1/m300_lidar",
+                        "min_height": -0.20,
+                        "max_height": 0.20,
                         "angle_min": -3.14159,
                         "angle_max": 3.14159,
                         "angle_increment": 0.0087,
-                        "scan_time": 0.1,
-                        "range_min": 0.4,
-                        "range_max": 12.0,
+                        "scan_time": 0.125,
+                        "range_min": 0.20,
+                        "range_max": 25.0,
                         "use_inf": True,
                     }
                 ],
                 output="screen",
             ),
             Node(
-                package="my_first_bot",
+                package="warehouse_2d",
                 executable="uwb_amcl_initializer.py",
                 name="uwb_amcl_initializer",
                 parameters=[

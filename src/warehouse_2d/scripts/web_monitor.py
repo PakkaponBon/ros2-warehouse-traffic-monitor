@@ -1302,6 +1302,7 @@ class WebMonitor(Node):
                                 ELSE 0
                               END)
                    FROM samples WHERE observed_at BETWEEN ? AND ?
+                     AND motion_state != 'turning'
                    GROUP BY 1, 2""",
                 (resolution, resolution, self.get_parameter("slow_speed").value, start, end),
             ).fetchall()
@@ -1335,6 +1336,7 @@ class WebMonitor(Node):
                                 ELSE NULL
                               END)
                    FROM samples WHERE observed_at BETWEEN ? AND ?
+                     AND motion_state != 'turning'
                    GROUP BY 1, 2, 3""",
                 (
                     resolution,

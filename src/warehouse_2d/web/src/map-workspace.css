@@ -98,3 +98,16 @@
   .dashboard .heat-area-button strong { font-size: 14px; }
   .dashboard .heat-ranking-head > span { font-size: 9px; }
 }
+
+/* Keep heat focused on delays; detailed controls and rankings are optional. */
+.dashboard .heat-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding-block: 12px; }
+.dashboard .heat-mode-note { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.dashboard .heat-mode-note strong { font-size: 12px; color: #4a6755; font-weight: 600; }
+.dashboard .heat-mode-note span { font-size: 10px; color: #7a887e; }
+.dashboard .heat-settings { margin-left: auto; }
+.dashboard .heat-settings > summary { font-size: 11px; color: var(--teal); cursor: pointer; padding: 5px 0; }
+.dashboard .heat-settings[open] { flex-basis: 100%; }
+.dashboard .heat-settings[open] > summary { margin-bottom: 12px; }
+.dashboard .heat-ranking > summary { cursor: pointer; color: #587462; font-size: 11px; padding: 8px 0; }
+.dashboard .heat-scale { margin-bottom: 5px; }
+.dashboard .heat-insights > .heat-empty { padding: 10px 12px; }

@@ -3,7 +3,7 @@
 from pathlib import Path
 import math
 
-OUT = Path.home() / "amr_ws/src/my_first_bot/worlds/fuel_warehouse.world"
+OUT = Path.home() / "warehouse_2d_ws/src/warehouse_2d/worlds/fuel_warehouse.world"
 
 
 def pose_from_local(base_x, base_y, yaw, lx, ly):

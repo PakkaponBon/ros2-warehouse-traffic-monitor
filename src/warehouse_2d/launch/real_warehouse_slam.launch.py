@@ -19,7 +19,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     """Launch Gazebo, a mapping vehicle, slam_toolbox, and optional RViz."""
-    package_share = Path(get_package_share_directory("my_first_bot"))
+    package_share = Path(get_package_share_directory("warehouse_2d"))
     gazebo_share = Path(get_package_share_directory("gazebo_ros"))
 
     gui = LaunchConfiguration("gui")
@@ -92,7 +92,7 @@ def generate_launch_description():
                 period=2.0,
                 actions=[
                     Node(
-                        package="my_first_bot",
+                        package="warehouse_2d",
                         executable="spawn_localized_vehicle.py",
                         name="spawn_mapping_vehicle",
                         parameters=[
@@ -129,7 +129,7 @@ def generate_launch_description():
                 period=5.0,
                 actions=[
                     Node(
-                        package="my_first_bot",
+                        package="warehouse_2d",
                         executable="traffic_simulator.py",
                         name="slam_mapping_driver",
                         parameters=[

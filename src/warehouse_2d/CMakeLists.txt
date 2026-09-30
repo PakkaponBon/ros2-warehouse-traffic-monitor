@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(my_first_bot)
+project(warehouse_2d)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -26,6 +26,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(traffic_simulator_test test/test_traffic_simulator.py)
   ament_add_pytest_test(grid_planner_test test/test_grid_planner.py)
   ament_add_pytest_test(real_warehouse_test test/test_real_warehouse.py)
+  ament_add_pytest_test(m300_pattern_test test/test_m300_pattern_emulator.py)
   ament_add_pytest_test(web_monitor_test test/test_web_monitor.py)
 endif()
 
@@ -55,6 +56,7 @@ install(
     scripts/uwb_amcl_initializer.py
     scripts/localization_validator.py
     scripts/simulation_fault_injector.py
+    scripts/m300_pattern_emulator.py
     scripts/prepare_slam_map.py
     scripts/web_monitor.py
   DESTINATION lib/${PROJECT_NAME}

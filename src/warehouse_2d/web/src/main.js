@@ -194,11 +194,13 @@ app.innerHTML = `
               <span id="mapViewHint" class="map-view-hint">Current vehicle positions</span>
             </div>
             <section id="heatControls" class="heat-controls" aria-label="Traffic heat settings" hidden>
+              <div class="heat-mode-note"><strong id="heatModeLabel">Waits & blockages</strong><span>Normal turning excluded</span></div>
+              <details class="heat-settings"><summary>Adjust heatmap</summary>
               <div class="heat-control-fields">
                 <label class="field"><span>Measure</span><select id="heatMetric">
                   <option value="count">Traffic activity</option>
                   <option value="vehicles">Vehicle coverage</option>
-                  <option value="slow_samples">Slow & waiting activity</option>
+                  <option value="slow_samples" selected>Waits & blockages</option>
                 </select></label>
                 <label class="field"><span>Show areas</span><select id="heatFilter">
                   <option value="0">All recorded areas</option>
@@ -210,6 +212,7 @@ app.innerHTML = `
                 </label>
               </div>
               <p id="heatMetricHelp" class="heat-metric-help"></p>
+              </details>
             </section>
             <div class="map-wrap map-stage">
               <canvas id="map" width="1200" height="720" tabindex="0" role="img"
@@ -226,7 +229,6 @@ app.innerHTML = `
             <div class="map-foot map-legend-row">
               <div id="vehicleLegend" class="legend" aria-label="Vehicle status colors">
                 <span><i class="state-dot moving"></i>Moving</span>
-                <span><i class="state-dot turning"></i>Turning</span>
                 <span><i class="state-dot waiting"></i>Waiting</span>
                 <span><i class="state-dot blocked"></i>Blocked</span>
                 <span><i class="state-dot idle"></i>Idle / other</span>
@@ -240,8 +242,10 @@ app.innerHTML = `
                 <div class="heat-scale-values"><span id="heatScaleLow"></span><span id="heatScaleHigh"></span></div>
                 <p id="heatScaleNote">Colors are relative to this time window.</p>
               </div>
-              <div class="heat-ranking-head"><strong id="heatRankingTitle">Most active areas</strong><span>Select an area to inspect it</span></div>
-              <div id="heatAreas" class="heat-areas"></div>
+              <details class="heat-ranking"><summary id="heatRankingTitle">Top areas</summary>
+                <div id="heatAreas" class="heat-areas"></div>
+              </details>
+              <p id="heatEmptyNotice" class="heat-empty" role="status" hidden></p>
             </section>
             <div id="mapSelection" class="map-selection">
               <div><span id="mapSelectionLabel" class="selection-label">EXPLORE THE MAP</span><p id="mapFocus" class="map-focus">Select a vehicle to see its route. Choose Traffic heat to explore busy areas.</p></div>
@@ -1079,6 +1083,7 @@ function syncHeatInsights() {
   const scale = map.heatScale;
   if (!scale) return;
   $('#heatMetricHelp').textContent = config.description;
+  $('#heatModeLabel').textContent = config.label;
   $('#heatOpacityValue').textContent = `${$('#heatOpacity').value}%`;
   $('#heatLegend').hidden = !scale.areas.length;
   $('#heatScaleTitle').textContent = config.label;
@@ -1091,6 +1096,9 @@ function syncHeatInsights() {
     : 'Relative intensity within this time window · colors stay consistent when filtering.';
   if (Number($('#heatFilter').value) > 0) $('#heatScaleNote').textContent += ` Showing ≥ ${scale.threshold.toLocaleString()} ${config.unit}; ties are included.`;
   $('#heatRankingTitle').textContent = config.ranking;
+  $('.heat-ranking').hidden = !scale.visible.length;
+  $('#heatEmptyNotice').hidden = Boolean(scale.visible.length);
+  $('#heatEmptyNotice').textContent = state.data === emptyData ? 'Waiting for traffic data from the monitor.' : config.empty;
   const root = $('#heatAreas');
   const html = scale.visible.length ? scale.visible.slice(0, 3).map((area, index) => {
     const selected = state.selectedHeat?.value.x === area.x && state.selectedHeat?.value.y === area.y;

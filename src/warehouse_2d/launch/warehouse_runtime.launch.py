@@ -17,7 +17,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    package_share = Path(get_package_share_directory("my_first_bot"))
+    package_share = Path(get_package_share_directory("warehouse_2d"))
     gazebo_share = Path(get_package_share_directory("gazebo_ros"))
 
     world = LaunchConfiguration("world")
@@ -223,7 +223,7 @@ def generate_launch_description():
                 output="screen",
             ),
             Node(
-                package="my_first_bot",
+                package="warehouse_2d",
                 executable="traffic_recorder.py",
                 name="traffic_recorder",
                 parameters=[
@@ -248,7 +248,7 @@ def generate_launch_description():
                 output="screen",
             ),
             Node(
-                package="my_first_bot",
+                package="warehouse_2d",
                 executable="traffic_simulator.py",
                 name="traffic_simulator",
                 parameters=[
@@ -267,7 +267,7 @@ def generate_launch_description():
                 output="screen",
             ),
             Node(
-                package="my_first_bot",
+                package="warehouse_2d",
                 executable="uwb_simulator.py",
                 name="uwb_simulator",
                 parameters=[
@@ -288,7 +288,7 @@ def generate_launch_description():
                 output="screen",
             ),
             Node(
-                package="my_first_bot",
+                package="warehouse_2d",
                 executable="localization_validator.py",
                 name="localization_validator",
                 parameters=[
@@ -307,7 +307,7 @@ def generate_launch_description():
                 output="screen",
             ),
             Node(
-                package="my_first_bot",
+                package="warehouse_2d",
                 executable="simulation_fault_injector.py",
                 name="simulation_fault_injector",
                 parameters=[
@@ -320,14 +320,14 @@ def generate_launch_description():
                 output="screen",
             ),
             Node(
-                package="my_first_bot",
+                package="warehouse_2d",
                 executable="traffic_heatmap.py",
                 name="traffic_heatmap",
                 parameters=[{"database_path": database, "use_sim_time": True}],
                 output="screen",
             ),
             Node(
-                package="my_first_bot",
+                package="warehouse_2d",
                 executable="web_monitor.py",
                 name="web_monitor",
                 parameters=[

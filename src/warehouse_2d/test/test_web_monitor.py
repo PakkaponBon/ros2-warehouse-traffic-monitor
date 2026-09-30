@@ -318,3 +318,37 @@ def test_side_task_control_is_guarded_and_publishes_valid_request(tmp_path):
     assert result["requested"]["vehicle_id"] == "vehicle_2"
     assert '"dwell_seconds":15.0' in monitor.task_request_publisher.messages[-1]
     monitor.connection.close()
+
+
+def test_normal_turning_does_not_add_heat_but_remains_in_vehicle_history(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    rows = [
+        (100.0, "vehicle_1", 1.1, 2.1, 0.0, "turning"),
+        (101.0, "vehicle_1", 1.1, 2.1, 0.0, "turning"),
+        (102.0, "vehicle_2", 4.1, 5.1, 0.0, "turning"),
+        (103.0, "vehicle_3", 4.1, 5.1, 0.0, "waiting_vehicle"),
+        (104.0, "vehicle_4", 4.1, 5.1, 0.6, "moving"),
+    ]
+    with monitor.connection:
+        monitor.connection.executemany(
+            """INSERT INTO samples
+               (observed_at, sim_time, vehicle_id, x, y, speed, source,
+                frame_id, motion_state, commanded_speed, intent_active)
+               VALUES (?, 10, ?, ?, ?, ?, 'amcl', 'map', ?, 0.8, 1)""",
+            rows,
+        )
+    result = monitor.query({"start": ["90"], "end": ["105"]})
+    assert result["samples"] == 5
+    assert len(result["density"]) == 1
+    cell = result["density"][0]
+    assert cell["count"] == 2
+    assert cell["vehicles"] == 2
+    assert cell["slow_samples"] == 1
+    assert cell["average_speed"] == 0.3
+    peak = cell["time_details"]["peaks"]["count"]
+    assert peak["count"] == 2
+    assert peak["vehicle_ids"] == ["vehicle_3", "vehicle_4"]
+    assert any(vehicle["vehicle_id"] == "vehicle_1"
+               and vehicle["motion_state"] == "turning" for vehicle in result["latest"])
+    assert any(track["vehicle_id"] == "vehicle_1" for track in result["tracks"])
+    monitor.connection.close()

@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>my_first_bot</name>
+  <name>warehouse_2d</name>
   <version>0.0.0</version>
   <description>2-D LiDAR warehouse localization and historical traffic analytics.</description>
   <maintainer email="pakkapon.a27@gmail.com">bo</maintainer>

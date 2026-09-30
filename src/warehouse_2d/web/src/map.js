@@ -421,7 +421,7 @@ export class WarehouseMap {
       returning_route: '#208366',
       side_work: '#c28c30',
       task_planning: '#91a7b9',
-      turning: '#3c84b5',
+      turning: '#208366',
       waiting_vehicle: '#c28c30',
       blocked_obstacle: '#ff6856',
       stalled: '#ff5263',

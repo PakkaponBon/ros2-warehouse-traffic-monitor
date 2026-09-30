@@ -1,8 +1,8 @@
 // Shared by the canvas and its legend so filtering never silently changes colors.
 export const HEAT_METRICS = {
-  count: { label: 'Traffic activity', unit: 'samples', description: 'Recorded position samples per area. More samples indicate more activity, not elapsed time.', empty: 'No traffic samples in this time window.', ranking: 'Most active areas' },
-  vehicles: { label: 'Vehicle coverage', unit: 'vehicles', description: 'Distinct vehicles recorded in each area during this time window.', empty: 'No vehicle coverage recorded in this time window.', ranking: 'Most visited areas' },
-  slow_samples: { label: 'Slow & waiting activity', unit: 'slow samples', description: 'Recorded waiting, blocked, stalled, or stuck readings; also low-speed readings with an unknown state. These are samples, not seconds.', empty: 'No slow or waiting samples in this time window.', ranking: 'Areas with most slow readings' },
+  count: { label: 'Traffic activity', unit: 'samples', description: 'Recorded position samples per area. Normal turns are excluded. Sample counts are not elapsed time.', empty: 'No traffic samples in this time window.', ranking: 'Most active areas' },
+  vehicles: { label: 'Vehicle coverage', unit: 'vehicles', description: 'Distinct vehicles recorded in each area, excluding normal turns.', empty: 'No vehicle coverage recorded in this time window.', ranking: 'Most visited areas' },
+  slow_samples: { label: 'Waits & blockages', unit: 'slow samples', description: 'Recorded waiting, blocked, stalled, or stuck readings; also low-speed readings with an unknown state. These are samples, not seconds.', empty: 'No waits or blockages recorded in this time window.', ranking: 'View top delay areas' },
 };
 
 export const HEAT_COLORS = ['#3b82c4', '#28a8aa', '#efbb4b', '#db5141'];
