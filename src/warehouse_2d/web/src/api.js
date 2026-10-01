@@ -19,6 +19,14 @@ export async function getMap() {
   return map;
 }
 export const getBounds = () => request('/api/bounds');
+export async function getDelivery() {
+  const delivery = await request('/api/tasks/delivery');
+  if (!Array.isArray(delivery.vehicles) || !Array.isArray(delivery.stations)
+    || typeof delivery.online !== 'boolean') {
+    throw new Error('Delivery fleet unavailable');
+  }
+  return delivery;
+}
 export async function getHealth() {
   const health = await request('/api/health');
   if (!health.ok || !health.services || !Array.isArray(health.vehicles)) {

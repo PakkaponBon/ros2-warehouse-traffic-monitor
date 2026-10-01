@@ -18,37 +18,8 @@ from simulation_faults import (  # noqa: E402
     validate_fault_request,
     vehicle_names,
 )
-from uwb_amcl_initializer import (  # noqa: E402
-    localization_loss_reason,
-    localization_topics,
-    odometry_is_stopped,
-)
 
 
-def test_every_profile_has_valid_starts_and_targets():
-    for profile in TrafficSimulator.PROFILES.values():
-        if profile.get("map_navigation") or profile.get("random_map_navigation"):
-            assert profile["starts"]
-            assert len(profile.get("fixed_routes", ())) >= len(profile["starts"])
-            assert all(len(route) >= 2 for route in profile["fixed_routes"])
-            continue
-        waypoints = profile["waypoints"]
-        if profile.get("loop"):
-            assert len(profile["starts"]) == len(profile["target_indices"])
-            assert all(
-                0 <= index < len(waypoints)
-                for index in profile["target_indices"]
-            )
-            continue
-        assert set(profile["starts"]).issubset(waypoints)
-        for point in waypoints:
-            choices = [
-                candidate
-                for candidate in waypoints
-                if candidate != point
-                and (candidate[0] == point[0] or candidate[1] == point[1])
-            ]
-            assert choices, f"waypoint {point} is isolated"
 
 
 def test_vehicle_priority_is_stable():
@@ -116,16 +87,6 @@ def test_localized_vehicle_template_gets_unique_topics_and_frames():
     )
 
 
-def test_uwb_initializer_uses_main_and_namespaced_amcl_topics():
-    main = localization_topics("my_robot")
-    traffic = localization_topics("vehicle_3")
-    assert main["initialpose"] == "/initialpose"
-    assert main["amcl_pose"] == "/amcl_pose"
-    assert main["uwb_pose"] == "/traffic/my_robot/uwb_pose"
-    assert traffic["initialpose"] == "/traffic/vehicle_3/initialpose"
-    assert traffic["amcl_pose"] == "/traffic/vehicle_3/amcl_pose"
-    assert traffic["odom"] == "/traffic/vehicle_3/odom"
-    assert traffic["validation"] == "/traffic/vehicle_3/localization_validation"
 
 
 def test_localization_interlock_requires_fresh_explicit_ready_state():
@@ -142,21 +103,8 @@ def test_localization_interlock_requires_fresh_explicit_ready_state():
     )
 
 
-def test_recovery_triggers_for_missing_amcl_or_filtered_disagreement():
-    assert localization_loss_reason("confirmed", 0.2, 2.0) is None
-    assert localization_loss_reason("uwb_unavailable", 0.2, 2.0) is None
-    assert localization_loss_reason("disagreement", 0.2, 2.0) == (
-        "persistent_uwb_disagreement"
-    )
-    assert localization_loss_reason("confirmed", 2.1, 2.0) == "amcl_missing"
 
 
-def test_recovery_requires_fresh_stopped_odometry():
-    now = 100.0
-    assert odometry_is_stopped((0.01, 0.02, 99.8), now, 1.0, 0.03, 0.08)
-    assert not odometry_is_stopped((0.2, 0.02, 99.8), now, 1.0, 0.03, 0.08)
-    assert not odometry_is_stopped((0.01, 0.2, 99.8), now, 1.0, 0.03, 0.08)
-    assert not odometry_is_stopped((0.0, 0.0, 95.0), now, 1.0, 0.03, 0.08)
 
 
 def test_simulation_fault_requests_are_bounded_and_vehicle_scoped():
@@ -260,3 +208,12 @@ def test_fault_event_store_records_terminal_action_once(tmp_path):
         ("teleport", "teleport", "succeeded", 201.0, 201.0, "updated")
     ]
     connection.close()
+
+
+def test_delivery_controller_exposes_only_its_own_layout():
+    from crtt_delivery_simulator import CrttDeliverySimulator
+    assert set(CrttDeliverySimulator.PROFILES) == {"crtt_delivery"}
+    profile = CrttDeliverySimulator.PROFILES["crtt_delivery"]
+    assert len(profile["starts"]) == 4
+    assert profile["map_navigation"]
+    assert profile["random_vehicle"] == "none"

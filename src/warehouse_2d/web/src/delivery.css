@@ -1,0 +1,55 @@
+.dashboard .delivery-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.dashboard .delivery-summary-heading .eyebrow, .dashboard .delivery-summary-heading p { margin: 0; }
+.dashboard .delivery-connection { display: inline-flex; align-items: center; gap: 7px; color: #39785e; font-size: 11px; }
+.dashboard .delivery-connection::before { content: ''; width: 6px; height: 6px; background: #2a9971; border-radius: 50%; }
+.dashboard .delivery-connection.offline { color: #9c7730; }
+.dashboard .delivery-connection.offline::before { background: #ba9344; }
+.dashboard .overview-grid { grid-template-columns: minmax(0, 1fr) 320px; }
+.dashboard .delivery-metrics .metric { min-height: 116px; }
+.dashboard .delivery-vehicle { padding: 20px 2px; }
+.dashboard .delivery-vehicle-route { display: flex; align-items: center; gap: 7px; font-size: 11px; line-height: 1.5; color: #63776b; margin: 3px 0 6px; }
+.dashboard .delivery-vehicle-route b { color: #a0b1a8; font-weight: 400; }
+.dashboard .delivery-vehicle-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.dashboard .delivery-vehicle-foot small { color: #376d54; }
+.dashboard .cargo-badge { display: inline-flex; align-items: center; gap: 5px; background: #f0f3f1; border-radius: 5px; padding: 3px 7px; color: #7a867f; font-size: 9px; white-space: nowrap; }
+.dashboard .cargo-badge.loaded { background: #e8f0fa; color: #3b6da1; }
+.dashboard .cargo-badge.loaded::before { content: ''; width: 5px; height: 5px; border: 1px solid #5c89b7; border-radius: 1px; }
+.dashboard .delivery-motion { color: #7c8881; font-size: 10px; }
+.dashboard .delivery-motion.blocked { color: #b35048; }
+.dashboard .delivery-progress { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin: 7px 0 10px; min-width: 155px; }
+.dashboard .delivery-progress span { color: #94a199; font-size: 9px; display: flex; flex-direction: column; gap: 4px; }
+.dashboard .delivery-progress i { width: 100%; height: 3px; background: #e5ece7; border-radius: 2px; }
+.dashboard .delivery-progress .done i { background: #79b49b; }
+.dashboard .delivery-progress .current i { background: #248566; }
+.dashboard .delivery-progress .current { color: #227759; font-weight: 650; }
+.dashboard .delivery-table-wrap { overflow-x: auto; }
+.dashboard .delivery-table { width: 100%; border-collapse: collapse; text-align: left; }
+.dashboard .delivery-table th { padding: 13px 20px; background: #f7faf8; font-size: 10px; font-weight: 550; color: #76877c; }
+.dashboard .delivery-table td { padding: 16px 20px; border-top: 1px solid #edf1ee; font-size: 12px; vertical-align: middle; }
+.dashboard .delivery-table td small { color: #688172; font-size: 10px; }
+.dashboard .delivery-table button { padding-left: 0; font-size: 12px; }
+.dashboard .delivery-job-id { font-size: 10px; font-variant-numeric: tabular-nums; color: #7c8b81; }
+.dashboard .delivery-job-route { display: flex; flex-direction: column; gap: 3px; white-space: nowrap; }
+.dashboard .delivery-job-route span:last-child { color: #6c7f73; }
+.dashboard .delivery-stations-panel { margin-top: 20px; }
+.dashboard .delivery-station-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 20px; padding: 8px 20px 18px; }
+.dashboard .delivery-station { display: flex; gap: 10px; align-items: center; padding: 16px 0; min-width: 0; }
+.dashboard .station-number { border: 1px solid #dce8e0; background: #f5f9f6; color: #578368; border-radius: 7px; padding: 8px; font-size: 11px; }
+.dashboard .delivery-station h3 { margin: 0; font-size: 11px; font-weight: 600; }
+.dashboard .delivery-station p { margin: 3px 0 0; font-size: 10px; color: #7b8d7f; }
+.dashboard .station-availability { margin-left: auto; flex-shrink: 0; width: 5px; height: 5px; border-radius: 50%; background: #8bc2a5; }
+.dashboard .station-availability.busy { background: #d5a350; }
+.dashboard .station-availability.unknown { background: #b5c0b9; }
+.dashboard [data-workspace="diagnostics"] .activity-grid { grid-template-columns: minmax(0, 1fr); }
+.dashboard .station-legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; border: 1px solid #459471; margin-right: 4px; }
+.dashboard .cargo-legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 1px; background: #568bc1; margin-right: 4px; }
+@media (max-width: 1100px) {
+  .dashboard .overview-grid { grid-template-columns: minmax(0, 1fr); }
+  .dashboard .summary-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; gap: 0 20px; }
+  .dashboard .delivery-station-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .dashboard .summary-grid, .dashboard .delivery-station-grid { grid-template-columns: minmax(0, 1fr); }
+  .dashboard .delivery-summary-heading { flex-wrap: wrap; }
+  .dashboard .delivery-table td, .dashboard .delivery-table th { padding: 12px; }
+}

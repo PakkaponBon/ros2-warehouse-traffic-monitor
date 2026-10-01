@@ -126,6 +126,9 @@ class MonitorHandler(BaseHTTPRequestHandler):
                 self._send(200, "application/json", json.dumps(payload).encode())
             except Exception as error:
                 self._send(500, "application/json", json.dumps({"ok": False, "error": str(error)}).encode())
+        elif parsed.path == "/api/tasks/delivery":
+            payload = self.monitor.delivery_snapshot()
+            self._send(200, "application/json", json.dumps(payload).encode())
         elif parsed.path == "/api/tasks/side-work":
             try:
                 payload = self.monitor.side_task_snapshot()
@@ -233,6 +236,10 @@ class WebMonitor(Node):
             self.get_parameter("enable_side_tasks").value
         )
         self.side_task_status = {}
+        self.delivery_status = None
+        self.create_subscription(
+            String, "/traffic/delivery/status", self._on_delivery_status, 10
+        )
         self.task_request_publisher = self.create_publisher(
             String, "/traffic/task_request", 10
         )
@@ -513,6 +520,27 @@ class WebMonitor(Node):
                 String(data=json.dumps(request, separators=(",", ":")))
             )
         return self._fault_snapshot()
+
+    def _on_delivery_status(self, message):
+        """Cache the pickup/drop-off fleet heartbeat for the delivery page."""
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(payload, dict) or not isinstance(payload.get("vehicles"), list):
+            return
+        payload["received_at"] = time.monotonic()
+        with self.lock:
+            self.delivery_status = payload
+
+    def delivery_snapshot(self):
+        with self.lock:
+            payload = getattr(self, "delivery_status", None)
+            if payload is None:
+                return {"online": False, "vehicles": [], "stations": [], "pending_jobs": 0}
+            result = {key: value for key, value in payload.items() if key != "received_at"}
+            result["online"] = time.monotonic() - payload["received_at"] < 3.0
+            return result
 
     def _on_side_task_status(self, vehicle_name, message):
         """Cache the latest side-work state published by the controller."""

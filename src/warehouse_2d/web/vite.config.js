@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
+const apiTarget = process.env.WAREHOUSE_API_TARGET || 'http://127.0.0.1:8080';
+const proxy = {
+  '/api': apiTarget,
+  '/map.png': apiTarget,
+};
+
 export default defineConfig({
   build: {
     outDir: 'dist',
@@ -14,10 +20,13 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
-    proxy: {
-      '/api': 'http://127.0.0.1:8080',
-      '/map.png': 'http://127.0.0.1:8080',
-    },
+    port: 5174,
+    strictPort: true,
+    proxy,
+  },
+  preview: {
+    port: 5174,
+    strictPort: true,
+    proxy,
   },
 });

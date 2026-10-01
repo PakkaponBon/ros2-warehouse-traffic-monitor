@@ -16,7 +16,7 @@ app.innerHTML = `
     <nav class="workspace-nav" aria-label="Workspace">
       <a href="/#overview"><span aria-hidden="true">◫</span>Overview</a>
       <a href="/#activity"><span aria-hidden="true">≋</span>Traffic history</a>
-      <a href="/#dispatch"><span aria-hidden="true">↗</span>Dispatch a task</a>
+      <a href="/#deliveries"><span aria-hidden="true">↗</span>Delivery jobs</a>
       <a href="/#diagnostics"><span aria-hidden="true">⌁</span>Diagnostics</a>
     </nav>
     <div class="sidebar-bottom">

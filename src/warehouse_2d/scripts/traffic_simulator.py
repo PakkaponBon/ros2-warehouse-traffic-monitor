@@ -11,6 +11,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from gazebo_msgs.msg import ModelStates
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
@@ -94,46 +95,8 @@ def parse_side_task_request(message_data, allowed_vehicles):
 class TrafficSimulator(Node):
     """Drive existing `vehicle_N` Gazebo models for repeatable traffic."""
 
-    PROFILES = {
-        "warehouse_2d": {
-            "waypoints": tuple(
-                (x, y)
-                for y in (-9.0, 0.0, 9.0)
-                for x in (-17.0, -4.0, 4.0, 17.0)
-            ),
-            "starts": (
-                (-17.0, -9.0), (-4.0, -9.0), (4.0, -9.0), (17.0, -9.0),
-                (17.0, 0.0), (17.0, 9.0), (4.0, 9.0), (-4.0, 9.0),
-            ),
-        },
-        # Seven repeatable loops exercise known warehouse traffic patterns.
-        # One configurable vehicle uses random A* goals to add variation.
-        # Every leg is still planned over the saved occupancy map.
-        "newwarehouse": {
-            "starts": (
-                (-16.0, -18.0),
-                (-4.0, -18.0),
-                (8.0, -18.0),
-                (9.6, -5.0),
-                (10.0, 3.0),
-                (9.1, 14.0),
-                (4.0, 19.4),
-                (-10.0, 19.4),
-            ),
-            "map_navigation": True,
-            "random_vehicle": "last",
-            "fixed_routes": (
-                ((-18.0, -18.0), (-5.0, -18.0), (-5.0, -12.0), (-18.0, -12.0)),
-                ((-24.0, -13.0), (-5.0, -13.0), (-5.0, -8.0), (-24.0, -8.0)),
-                ((7.0, -18.0), (21.0, -18.0), (21.0, -13.0), (7.0, -13.0)),
-                ((6.0, -8.0), (24.0, -8.0), (24.0, -3.0), (6.0, -3.0)),
-                ((6.0, 2.0), (24.0, 2.0), (24.0, 7.0), (6.0, 7.0)),
-                ((6.0, 12.0), (20.0, 12.0), (20.0, 17.0), (6.0, 17.0)),
-                ((-18.0, 12.0), (-5.0, 12.0), (-5.0, 17.0), (-18.0, 17.0)),
-                ((-5.0, -18.0), (5.0, -18.0), (5.0, 18.0), (-5.0, 18.0)),
-            ),
-        },
-    }
+    # Subclasses supply their own layout and spawn configuration.
+    PROFILES = {}
 
     def __init__(self):
         super().__init__("traffic_simulator")
@@ -142,7 +105,7 @@ class TrafficSimulator(Node):
         self.declare_parameter("update_period", 0.2)
         self.declare_parameter("seed", 42)
         self.declare_parameter("model_prefix", "vehicle_")
-        self.declare_parameter("profile", "warehouse_2d")
+        self.declare_parameter("profile", "crtt_delivery")
         self.declare_parameter("pose_source", "gazebo")
         self.declare_parameter("map_yaml", "")
         self.declare_parameter("planning_resolution", 0.30)
@@ -295,7 +258,7 @@ class TrafficSimulator(Node):
                         LaserScan,
                         f"/traffic/{name}/scan",
                         lambda message, vehicle=name: self.on_scan(vehicle, message),
-                        10,
+                        qos_profile_sensor_data,
                     )
                 )
             self.states[name] = {

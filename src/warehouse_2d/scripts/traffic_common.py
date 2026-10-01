@@ -127,6 +127,8 @@ KNOWN_MOTION_STATES = {
     "planning",
     "localizing",
     "sensor_wait",
+    "loading",
+    "unloading",
     "unknown",
 }
 
@@ -172,8 +174,8 @@ def classify_motion_state(
         return state, True
     if state in {"planning", "localizing", "sensor_wait"}:
         return state, True
-    if state == "idle":
-        return "idle", False
+    if state in {"idle", "loading", "unloading"}:
+        return state, False
     if state in {"moving", "stalled", "stuck"} or commanded_linear >= float(command_speed):
         return "stalled", True
     return "idle", False

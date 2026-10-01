@@ -1,4 +1,6 @@
 import threading
+import json
+import time
 from types import SimpleNamespace
 import sys
 from pathlib import Path
@@ -42,6 +44,20 @@ def make_monitor(database):
     }
     monitor.get_parameter = lambda name: SimpleNamespace(value=parameters[name])
     return monitor
+
+
+def test_delivery_snapshot_waits_for_controller_and_detects_stale_heartbeat(tmp_path):
+    monitor = make_monitor(tmp_path / "delivery.db")
+    assert not monitor.delivery_snapshot()["online"]
+    monitor._on_delivery_status(SimpleNamespace(data=json.dumps({
+        "vehicles": [{"vehicle_id": "vehicle_1", "phase": "loading"}], "pending_jobs": 3,
+    })))
+    assert monitor.delivery_snapshot()["online"]
+    assert monitor.delivery_snapshot()["vehicles"][0]["phase"] == "loading"
+    monitor.delivery_status["received_at"] = time.monotonic() - 10
+    assert not monitor.delivery_snapshot()["online"]
+    monitor._on_delivery_status(SimpleNamespace(data='{"vehicles":42}'))
+    assert not monitor.delivery_snapshot()["online"]
 
 
 def test_historical_query_returns_recorded_validation_not_live_cache(tmp_path):

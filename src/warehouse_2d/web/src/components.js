@@ -11,6 +11,8 @@ const MOTION_STATES = {
   side_task: ['Travelling to side task', 'moving'],
   returning_route: ['Returning to normal route', 'moving'],
   side_work: ['Performing side work', 'waiting'],
+  loading: ['Loading cargo', 'waiting'],
+  unloading: ['Unloading cargo', 'waiting'],
   task_planning: ['Planning side-task route', 'idle'],
   turning: ['Turning normally', 'turning'],
   waiting_vehicle: ['Waiting for vehicle', 'waiting'],

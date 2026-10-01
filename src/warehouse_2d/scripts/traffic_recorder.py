@@ -304,6 +304,11 @@ class TrafficRecorder(Node):
         linear = message.twist.twist.linear
         self.traffic_speeds[name] = math.hypot(linear.x, linear.y)
         self.traffic_speed_received[name] = time.monotonic()
+        # AMCL does not publish another pose when a truck remains at a dock.
+        # Refresh speed without refreshing the age of that localization pose.
+        track = self.tracks.get(name)
+        if track is not None and track.source in {"amcl", "amcl_with_odom_speed"}:
+            track.speed = self.traffic_speeds[name]
 
     def on_amcl_pose(self, message):
         now = time.monotonic()

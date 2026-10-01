@@ -420,6 +420,8 @@ export class WarehouseMap {
       side_task: '#208366',
       returning_route: '#208366',
       side_work: '#c28c30',
+      loading: '#c28c30',
+      unloading: '#c28c30',
       task_planning: '#91a7b9',
       turning: '#208366',
       waiting_vehicle: '#c28c30',
@@ -444,6 +446,12 @@ export class WarehouseMap {
     this.ctx.shadowBlur = 0;
     this.ctx.fillStyle = color;
     this.ctx.beginPath(); this.ctx.arc(0, 0, selected ? 6.5 : 5.5, 0, Math.PI * 2); this.ctx.fill();
+    const delivery = this.lastOptions?.delivery?.vehicles?.find((item) => item.vehicle_id === vehicle.vehicle_id);
+    if (delivery?.carrying) {
+      this.ctx.fillStyle = '#568bc1';
+      this.ctx.strokeStyle = '#ffffff'; this.ctx.lineWidth = 1.5;
+      this.ctx.fillRect(5, 4, 7, 7); this.ctx.strokeRect(5, 4, 7, 7);
+    }
     if (this.lastOptions?.labels !== false || selected) {
       const label = vehicle.vehicle_id === 'my_robot' ? 'AMR' : vehicle.vehicle_id.replace('vehicle_', 'V').replace('forklift_', 'F');
       this.ctx.font = '600 11px system-ui';
@@ -489,6 +497,28 @@ export class WarehouseMap {
     });
   }
 
+  drawStations(options) {
+    (options.dockingPoints || []).forEach((station, index) => {
+      if (!Number.isFinite(station.x) || !Number.isFinite(station.y)) return;
+      const { x, y } = this.project(station.x, station.y);
+      const unit = this.markerUnit();
+      const docked = options.delivery?.vehicles?.some((vehicle) =>
+        (vehicle.phase === 'loading' && vehicle.pickup === station.id)
+        || (vehicle.phase === 'unloading' && vehicle.dropoff === station.id));
+      this.ctx.save();
+      this.ctx.translate(x, y); this.ctx.scale(unit, unit);
+      this.ctx.fillStyle = docked ? '#fff3dc' : '#ffffffee';
+      this.ctx.strokeStyle = docked ? '#be8d32' : '#6eaa88'; this.ctx.lineWidth = 1.3;
+      this.ctx.beginPath(); this.ctx.roundRect(-10, -9, 20, 18, 4); this.ctx.fill(); this.ctx.stroke();
+      this.ctx.font = '600 9px system-ui'; this.ctx.textAlign = 'center';
+      this.ctx.fillStyle = docked ? '#99671c' : '#347356';
+      this.ctx.fillText(String(index + 1).padStart(2, '0'), 0, 3);
+      this.ctx.restore();
+      this.hits.push({ x, y, radius: 13 * unit, priority: 2,
+        label: `${String(index + 1).padStart(2, '0')} · ${station.label}\nPickup & drop-off point${docked ? ' · loading / unloading' : ''}` });
+    });
+  }
+
   draw(data, options) {
     this.lastData = data;
     this.lastOptions = options;
@@ -500,6 +530,7 @@ export class WarehouseMap {
     this.drawGrid();
     if (options.heat) this.drawHeat(data, options.heatFilter, options.heatMetric, options.heatOpacity);
     if (options.paths) this.drawPaths(data);
+    if (options.stations) this.drawStations(options);
     if (options.stuck) data.stuck.slice(0, 12).forEach((value) => this.circle(value, 8 + Math.min(10, Math.log2(value.events + 1) * 2), '#ffbf47cc', `${value.events} stuck event(s) · ${Math.round(value.duration)} seconds`, '#fff0bd', 'Stuck'));
     if (options.congestion) data.congestion.slice(0, 12).forEach((value) => this.circle(value, 10 + Math.min(14, value.max_vehicles * 2), '#ff5263b8', `${value.events} congestion event(s) · up to ${value.max_vehicles} vehicles`, '#ff9ba5', 'Congestion'));
     if (options.vehicles) {

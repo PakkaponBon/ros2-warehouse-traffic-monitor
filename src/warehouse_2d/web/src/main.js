@@ -1,12 +1,14 @@
 import './styles.css';
 import './dashboard.css';
 import './map-workspace.css';
+import './delivery.css';
+import fallbackMapInfo from './warehouse-map.json';
+import { renderDeliveryMetrics, renderDeliveryFleet, renderDeliveryJobs, renderStationActivity } from './delivery.js';
 import {
   getBounds,
   getMap,
-  getSideTasks,
+  getDelivery,
   getState,
-  setSideTask,
 } from './api.js';
 import {
   renderAnalytics,
@@ -15,14 +17,12 @@ import {
   renderLocalization,
   renderMetrics,
   renderStuckTimeline,
-  renderUwbValidation,
   renderVehicleSummary,
   setConnection,
   setMode,
 } from './components.js';
 import { HEAT_METRICS, HEAT_GRADIENT, heatColor } from './heatmap.js';
 import { WarehouseMap } from './map.js';
-import { RouteSuggestionMap } from './route-map.js';
 
 const app = document.querySelector('#app');
 document.body.classList.add('dashboard');
@@ -43,8 +43,8 @@ app.innerHTML = `
         <span aria-hidden="true">◫</span>Overview</button>
       <button type="button" data-view="activity">
         <span aria-hidden="true">≋</span>Traffic history</button>
-      <button type="button" data-view="dispatch">
-        <span aria-hidden="true">↗</span>Dispatch a task</button>
+      <button type="button" data-view="deliveries">
+        <span aria-hidden="true">↗</span>Delivery jobs</button>
       <button type="button" data-view="diagnostics">
         <span aria-hidden="true">⌁</span>Diagnostics</button>
     </nav>
@@ -73,8 +73,8 @@ app.innerHTML = `
       <div class="page-heading">
         <div>
           <p class="eyebrow">WAREHOUSE OPERATIONS</p>
-          <h1 id="pageTitle">Your warehouse, at a glance.</h1>
-          <p id="pageDescription">See where your vehicles are and what needs attention.</p>
+          <h1 id="pageTitle">Keep your floor moving.</h1>
+          <p id="pageDescription">Follow your fleet, deliveries, and traffic in one place.</p>
         </div>
         <span id="mode" class="mode">LIVE</span>
       </div>
@@ -135,14 +135,14 @@ app.innerHTML = `
       <div id="dataNotice" class="data-notice" role="status" hidden>
       </div>
       <section data-workspace="overview" aria-label="Overview">
-        <section id="metrics" class="metrics" aria-label="Traffic summary">
-        </section>
+        <div class="delivery-summary-heading"><span class="eyebrow">LIVE OPERATIONS</span><span id="deliveryConnection" class="delivery-connection" role="status">Connecting to fleet…</span></div>
+        <section id="deliveryMetrics" class="metrics delivery-metrics" aria-label="Live delivery summary"></section>
         <div class="overview-grid">
           <section class="panel map-panel">
             <div class="panel-head">
               <div>
                 <h2>Warehouse map</h2>
-                <span class="sub">Explore your floor, vehicles, and traffic</span>
+                <span class="sub">Vehicle positions, docking points, and traffic</span>
               </div>
               <details class="layer-menu">
                 <summary>Layers <span aria-hidden="true">⌄</span>
@@ -162,15 +162,13 @@ app.innerHTML = `
                     <input id="stuckLayer" type="checkbox"> Stuck locations</label>
                   <label>
                     <input id="jamLayer" type="checkbox"> Congestion</label>
-                  <label>
-                    <input id="tagLayer" type="checkbox"> UWB sensor tags</label>
+                  <label><input id="stationLayer" type="checkbox" checked> Pickup &amp; drop-off points</label>
+                  <label hidden><input id="tagLayer" type="checkbox"> Sensor tags</label>
                   <label class="state-filter">Vehicle state <select id="stateFilter">
                       <option value="all">All states</option>
                       <option value="moving">Moving</option>
-                      <option value="side_task">Travelling to side task</option>
-                      <option value="returning_route">Returning to route</option>
-                      <option value="side_work">Performing side work</option>
-                      <option value="task_planning">Planning side task</option>
+                      <option value="loading">Loading cargo</option>
+                      <option value="unloading">Unloading cargo</option>
                       <option value="turning">Turning normally</option>
                       <option value="waiting_vehicle">Waiting for vehicle</option>
                       <option value="blocked_obstacle">Blocked by obstacle</option>
@@ -232,6 +230,8 @@ app.innerHTML = `
                 <span><i class="state-dot waiting"></i>Waiting</span>
                 <span><i class="state-dot blocked"></i>Blocked</span>
                 <span><i class="state-dot idle"></i>Idle / other</span>
+                <span><i class="station-legend-dot"></i>Docking point</span>
+                <span><i class="cargo-legend-dot"></i>Carrying cargo</span>
               </div>
               <span id="issuesLegend" class="legend" hidden><span><i class="dot stuck"></i>Stuck location</span><span><i class="dot congestion"></i>Congestion</span></span>
             </div>
@@ -262,7 +262,7 @@ app.innerHTML = `
           <section class="panel summary-panel">
             <div class="panel-head">
               <div>
-                <h2>Your fleet <span id="fleetCount" class="count-badge">0</span>
+                <h2>Delivery fleet <span id="fleetCount" class="count-badge">0</span>
                 </h2>
                 <span class="sub">Select a vehicle to locate it</span>
               </div>
@@ -288,6 +288,7 @@ app.innerHTML = `
         </section>
       </section>
       <section data-workspace="activity" aria-label="Traffic history" hidden>
+        <section id="metrics" class="metrics" aria-label="Traffic summary"></section>
         <div class="view-intro">
           <span class="intro-icon" aria-hidden="true">◷</span>
           <p>Explore slowdowns and recurring hotspots. Select an event to find it on the map, or use <b>Replay history</b> to review a recorded time.</p>
@@ -315,67 +316,15 @@ app.innerHTML = `
           </section>
         </div>
       </section>
-      <section data-workspace="dispatch" aria-label="Task dispatch" hidden>
-        <section class="panel route-panel task-panel">
-          <div class="panel-head">
-            <div>
-              <h2>Dispatch a task</h2>
-              <span class="sub">Choose a forklift and a destination. It returns to its route when the work is done.</span>
-            </div>
-            <span class="tag control">SIMULATION CONTROL</span>
-          </div>
-          <div class="route-layout">
-            <form id="taskForm" class="route-controls">
-              <label class="field">
-                <span>Forklift</span>
-                <select id="taskVehicle">
-                  <option value="">Waiting for vehicles…</option>
-                </select>
-              </label>
-              <div class="route-coordinate-row">
-                <label class="field">
-                  <span>Destination X (m)</span>
-                  <input id="taskX" required type="number" step="0.01" placeholder="Click map">
-                </label>
-                <label class="field">
-                  <span>Destination Y (m)</span>
-                  <input id="taskY" required type="number" step="0.01" placeholder="Click map">
-                </label>
-              </div>
-              <label class="field">
-                <span>Work duration (seconds)</span>
-                <input id="taskDuration" required type="number" min="0" max="3600" step="1" value="10">
-              </label>
-              <div class="task-actions">
-                <button id="dispatchTaskButton" type="submit">Dispatch task</button>
-                <button id="cancelTaskButton" type="button" class="secondary">Cancel task</button>
-              </div>
-              <p id="taskStatus" role="status" class="route-status">Select a forklift, then click a destination on the map.</p>
-              <p class="route-safety">Simulation only. Choose an open aisle on the map. The forklift will travel there, complete the work, and return to its route.</p>
-            </form>
-            <div class="route-map-wrap">
-              <canvas id="taskMap" width="1000" height="560">
-              </canvas>
-              <div id="taskTooltip" class="tooltip">
-              </div>
-              <div class="route-map-legend">
-                <span>
-                  <i class="task-goal-dot">
-                  </i>selected side-work destination</span>
-                <span>Click a collision-free aisle location</span>
-              </div>
-            </div>
-            <div id="taskResult" class="route-result task-result">
-              <h3>What happens next</h3>
-              <ol>
-                <li>Travel to the selected destination</li>
-                <li>Remain there for the work duration</li>
-                <li>Return to the saved route checkpoint</li>
-                <li>Resume the normal route automatically</li>
-              </ol>
-              <div id="taskLiveStatus" role="status" class="task-live-status">No side-work status received yet.</div>
-            </div>
-          </div>
+      <section data-workspace="deliveries" aria-label="Delivery jobs" hidden>
+        <div class="delivery-summary-heading"><p class="control-hint">Automatic pickup and delivery across the warehouse.</p><span class="tag">LIVE JOBS</span></div>
+        <section class="panel delivery-jobs-panel">
+          <div class="panel-head"><div><h2>Current deliveries</h2><span class="sub">Select a forklift to find it on the map</span></div><span id="deliveryUpdated" class="sub">Waiting for fleet updates</span></div>
+          <div class="delivery-table-wrap"><table class="delivery-table"><thead><tr><th>Forklift</th><th>Delivery</th><th>Pickup → Drop-off</th><th>Progress</th><th>Cargo</th><th>Completed</th></tr></thead><tbody id="deliveryJobs"></tbody></table></div>
+        </section>
+        <section class="panel delivery-stations-panel">
+          <div class="panel-head"><div><h2>Pickup &amp; drop-off points</h2><span class="sub">Numbers match the docking points on the map</span></div><span id="stationCount" class="count-badge">—</span></div>
+          <div id="deliveryStations" class="delivery-station-grid"></div>
         </section>
       </section>
       <section data-workspace="diagnostics" aria-label="Position diagnostics" hidden>
@@ -396,18 +345,6 @@ app.innerHTML = `
               <div class="empty">Waiting for localization samples…</div>
             </div>
           </section>
-          <section class="panel">
-            <div class="panel-head">
-              <div>
-                <h2>UWB localization validation</h2>
-                <span class="sub">Time-aligned UWB and AMCL comparison</span>
-              </div>
-              <span class="tag">CHECK ONLY</span>
-            </div>
-            <div id="uwbValidation" class="uwb-validation">
-              <div class="empty">Waiting for UWB validation…</div>
-            </div>
-          </section>
         </div>
       </section>
       <footer class="workspace-footer">
@@ -420,7 +357,6 @@ app.innerHTML = `
 
 const $ = (selector) => document.querySelector(selector);
 const map = new WarehouseMap($('#map'));
-const taskMap = new RouteSuggestionMap($('#taskMap'), $('#taskTooltip'));
 
 const state = {
   data: null,
@@ -436,8 +372,9 @@ const state = {
   selectedHotspot: null,
   selectedHeat: null,
   selectedVehicle: null,
-  taskLoading: false,
-  taskStatuses: [],
+  delivery: null,
+  deliveryLoading: false,
+  deliveryConnected: false,
 };
 
 const emptyData = {
@@ -480,6 +417,9 @@ function clamp(epoch) {
 
 function options() {
   return {
+    stations: $('#stationLayer').checked,
+    dockingPoints: state.delivery?.stations || [],
+    delivery: state.auto && state.deliveryConnected && state.delivery?.online ? state.delivery : null,
     paths: $('#pathLayer').checked,
     grid: $('#gridLayer').checked,
     labels: $('#labelLayer').checked,
@@ -504,23 +444,8 @@ function redraw() {
 function render(data) {
   state.data = data;
   renderMetrics($('#metrics'), data);
-  $('#fleetCount').textContent = data.latest.length;
-  const focusedVehicle = document.activeElement?.closest('#summaryRows [data-vehicle]')?.dataset.vehicle;
-  renderVehicleSummary(
-    $('#summaryRows'),
-    data.latest,
-    data.localization?.vehicles || [],
-  );
-  if (focusedVehicle) {
-    [...$('#summaryRows').querySelectorAll('[data-vehicle]')]
-      .find((card) => card.dataset.vehicle === focusedVehicle)?.focus({ preventScroll: true });
-  }
+  renderFleet(data);
   renderLocalization($('#localization'), data.localization);
-  renderUwbValidation(
-    $('#uwbValidation'),
-    data.uwb_validation,
-    data.localization_recovery,
-  );
   if (state.selectedVehicle) {
     const selected = [...document.querySelectorAll('#summaryRows [data-vehicle]')].find((card) => (
       card.dataset.vehicle === state.selectedVehicle
@@ -550,7 +475,6 @@ function render(data) {
   }
   renderHotspots($('#hotspots'), data);
   renderStuckTimeline($('#stuckTimeline'), data.stuck_timeline);
-  updateTaskVehicles(data.latest);
   if (state.selectedHotspot) {
     const selected = [...document.querySelectorAll('#hotspots [data-hotspot]')].find((row) => (
       Math.abs(Number(row.dataset.x) - state.selectedHotspot.x) < 0.001
@@ -598,19 +522,57 @@ function selectHeatArea(value, metric) {
 }
 map.setHeatSelectionHandler(selectHeatArea);
 
-function updateTaskVehicles(vehicles) {
-  const select = $('#taskVehicle');
-  const previous = select.value;
-  select.replaceChildren(...(
-    vehicles.length
-      ? vehicles.map((vehicle) => new Option(vehicle.vehicle_id, vehicle.vehicle_id))
-      : [new Option('No vehicles in this time range', '')]
-  ));
-  const preferred = state.selectedVehicle || previous;
-  if (vehicles.some((vehicle) => vehicle.vehicle_id === preferred)) {
-    select.value = preferred;
+function renderFleet(data = state.data) {
+  if (!data) return;
+  const focused = document.activeElement?.closest('#summaryRows [data-vehicle]')?.dataset.vehicle;
+  if (state.auto && state.deliveryConnected && state.delivery?.online) {
+    $('#fleetCount').textContent = state.delivery.vehicles.length;
+    renderDeliveryFleet($('#summaryRows'), data.latest, state.delivery, state.selectedVehicle);
+  } else {
+    $('#fleetCount').textContent = data.latest.length;
+    renderVehicleSummary($('#summaryRows'), data.latest, data.localization?.vehicles || []);
+    [...$('#summaryRows').querySelectorAll('[data-vehicle]')].find((card) => card.dataset.vehicle === state.selectedVehicle)?.classList.add('selected');
+  }
+  if (focused) [...$('#summaryRows').querySelectorAll('[data-vehicle]')].find((card) => card.dataset.vehicle === focused)?.focus({ preventScroll: true });
+}
+
+function renderDelivery() {
+  renderDeliveryMetrics($('#deliveryMetrics'), state.delivery, state.deliveryConnected);
+  renderDeliveryJobs($('#deliveryJobs'), state.delivery, state.deliveryConnected);
+  renderStationActivity($('#deliveryStations'), state.delivery ? { ...state.delivery, online: state.deliveryConnected && state.delivery.online } : null);
+  $('#stationCount').textContent = state.delivery?.stations?.length ?? '—';
+  const online = state.deliveryConnected && state.delivery?.online;
+  $('#deliveryConnection').classList.toggle('offline', !online);
+  $('#deliveryConnection').textContent = online ? 'Fleet online · automatic deliveries' : state.delivery ? 'Fleet updates unavailable' : 'Waiting for fleet';
+  const observedAt = state.delivery?.observed_at;
+  $('#deliveryUpdated').textContent = observedAt
+    ? `Last update ${new Date(observedAt * 1000).toLocaleTimeString()}` : 'Waiting for fleet updates';
+  // Keep historical traffic separate from the live job snapshot.
+  renderFleet();
+  redraw();
+}
+
+async function refreshDelivery() {
+  if (state.deliveryLoading) return;
+  state.deliveryLoading = true;
+  try {
+    state.delivery = await getDelivery();
+    state.deliveryConnected = true;
+  } catch {
+    state.deliveryConnected = false;
+  } finally {
+    state.deliveryLoading = false;
+    renderDelivery();
   }
 }
+
+$('#deliveryJobs').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-delivery-vehicle]');
+  if (button) {
+    if (!state.auto) goLive();
+    selectVehicle({ dataset: { vehicle: button.dataset.deliveryVehicle } });
+  }
+});
 
 async function load(query) {
   if (state.loading) return;
@@ -779,10 +741,7 @@ function selectVehicle(card, scrollToMap = true) {
   document.querySelectorAll('#hotspots [data-hotspot]').forEach((item) => item.classList.remove('selected'));
   $('#pathLayer').checked = true;
   map.focusVehicle(state.selectedVehicle);
-  if ([...$('#taskVehicle').options].some((option) => option.value === state.selectedVehicle)) {
-    $('#taskVehicle').value = state.selectedVehicle;
-    renderSelectedTaskStatus();
-  }
+
 
   const vehicle = state.data?.latest?.find((item) => item.vehicle_id === state.selectedVehicle);
   $('#mapFocus').textContent = vehicle
@@ -921,6 +880,7 @@ $('#analytics').addEventListener('keydown', (event) => {
   'stuckLayer',
   'jamLayer',
   'tagLayer',
+  'stationLayer',
   'heatMetric',
   'heatFilter',
   'heatOpacity',
@@ -962,120 +922,6 @@ $('#timeline').addEventListener('input', (event) => {
   clearTimeout(state.debounce);
   state.debounce = setTimeout(() => loadFrame(state.cursor), 120);
 });
-
-function taskStatusText(status) {
-  if (!status) return 'No side-work status received for this vehicle.';
-  const task = status.task_id ? `Task ${status.task_id}` : 'Task';
-  const reason = status.reason ? ` · ${status.reason.replaceAll('_', ' ')}` : '';
-  return `${task}: ${status.status.replaceAll('_', ' ')}${reason}`;
-}
-
-function renderSelectedTaskStatus() {
-  const vehicleId = $('#taskVehicle').value;
-  const status = state.taskStatuses.find((item) => item.vehicle_id === vehicleId);
-  $('#taskLiveStatus').textContent = taskStatusText(status);
-}
-
-async function refreshTaskStatus() {
-  try {
-    const snapshot = await getSideTasks();
-    state.taskStatuses = snapshot.statuses;
-    renderSelectedTaskStatus();
-    if (!snapshot.enabled) {
-      $('#taskStatus').className = 'route-status error';
-      $('#taskStatus').textContent = 'Side-work controls are disabled in this launch.';
-    }
-  } catch (error) {
-    $('#taskLiveStatus').textContent = `Task status unavailable: ${error.message}`;
-  }
-}
-
-taskMap.onDestination((point) => {
-  $('#taskX').value = point.x.toFixed(2);
-  $('#taskY').value = point.y.toFixed(2);
-  taskMap.setDestination(point);
-  $('#taskStatus').className = 'route-status';
-  $('#taskStatus').textContent = `Task destination selected at x ${point.x.toFixed(2)}, y ${point.y.toFixed(2)}.`;
-});
-
-$('#taskVehicle').addEventListener('change', renderSelectedTaskStatus);
-
-$('#taskForm').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (state.taskLoading) return;
-
-  const vehicleId = $('#taskVehicle').value;
-  const x = Number($('#taskX').value);
-  const y = Number($('#taskY').value);
-  const dwellSeconds = Number($('#taskDuration').value);
-  const status = $('#taskStatus');
-  if (!vehicleId || !$('#taskX').value || !$('#taskY').value || !$('#taskDuration').value
-      || !Number.isFinite(x) || !Number.isFinite(y)
-      || !Number.isFinite(dwellSeconds) || dwellSeconds < 0 || dwellSeconds > 3600) {
-    status.className = 'route-status error';
-    status.textContent = 'Choose a forklift, destination, and work duration from 0–3600 seconds.';
-    return;
-  }
-  if (!state.auto) {
-    status.className = 'route-status error';
-    status.textContent = 'Return to Live mode before dispatching a vehicle.';
-    return;
-  }
-
-  state.taskLoading = true;
-  $('#dispatchTaskButton').disabled = true;
-  $('#cancelTaskButton').disabled = true;
-  status.className = 'route-status loading';
-  status.textContent = `Dispatching ${vehicleId}…`;
-  try {
-    const snapshot = await setSideTask({
-      vehicle_id: vehicleId,
-      x,
-      y,
-      dwell_seconds: dwellSeconds,
-    });
-    state.taskStatuses = snapshot.statuses;
-    status.className = 'route-status success';
-    status.textContent = `${vehicleId}: task request sent. Waiting for the controller acknowledgement.`;
-    renderSelectedTaskStatus();
-    setTimeout(refreshTaskStatus, 350);
-  } catch (error) {
-    status.className = 'route-status error';
-    status.textContent = error.message;
-  } finally {
-    state.taskLoading = false;
-    $('#dispatchTaskButton').disabled = false;
-    $('#cancelTaskButton').disabled = false;
-  }
-});
-
-$('#cancelTaskButton').addEventListener('click', async () => {
-  if (state.taskLoading) return;
-  const vehicleId = $('#taskVehicle').value;
-  const status = $('#taskStatus');
-  if (!vehicleId) {
-    status.className = 'route-status error';
-    status.textContent = 'Choose a forklift to cancel its active task.';
-    return;
-  }
-  state.taskLoading = true;
-  $('#dispatchTaskButton').disabled = true;
-  $('#cancelTaskButton').disabled = true;
-  try {
-    await setSideTask({ action: 'cancel', vehicle_id: vehicleId });
-    status.className = 'route-status success';
-    status.textContent = `${vehicleId}: cancellation request sent.`;
-    setTimeout(refreshTaskStatus, 350);
-  } catch (error) {
-    status.className = 'route-status error';
-    status.textContent = error.message;
-  } finally {
-    state.taskLoading = false;
-    $('#dispatchTaskButton').disabled = false;
-    $('#cancelTaskButton').disabled = false;
-  }
-});
-
 
 function syncHeatInsights() {
   const metric = $('#heatMetric').value;
@@ -1196,9 +1042,9 @@ document.querySelectorAll('[data-map-view]').forEach((button) => {
 });
 
 const views = {
-  overview: ['Overview', 'Your warehouse, at a glance.', 'See where your vehicles are and what needs attention.'],
+  overview: ['Overview', 'Keep your floor moving.', 'Follow your fleet, deliveries, and traffic in one place.'],
   activity: ['Traffic history', 'Understand your traffic.', 'Find recurring slowdowns and explore recorded events.'],
-  dispatch: ['Dispatch a task', 'Put your fleet to work.', 'Send a simulated forklift to a temporary job.'],
+  deliveries: ['Delivery jobs', 'Every delivery, in view.', 'Track pickups, cargo, and completed jobs across your fleet.'],
   diagnostics: ['Diagnostics', 'A closer look at positioning.', 'Compare sensor readings and investigate position accuracy.'],
 };
 
@@ -1251,6 +1097,7 @@ document.addEventListener('click', (event) => {
 
 async function boot() {
   render(emptyData);
+  renderDelivery();
   // Unknown counts must not look like a successfully observed empty warehouse.
   $('#metrics').querySelectorAll('.metric strong').forEach((value) => { value.textContent = '—'; });
   $('#metrics').querySelectorAll('.metric small').forEach((label) => { label.textContent = 'Waiting for traffic data'; });
@@ -1258,19 +1105,16 @@ async function boot() {
 
   try {
     const mapInfo = await getMap();
-    await Promise.all([map.load(mapInfo), taskMap.load(mapInfo)]);
+    await map.load(mapInfo);
     redraw();
   } catch {
-    await Promise.all([
-      map.load(map.info, '/fallback-map.png'),
-      taskMap.load(taskMap.info, '/fallback-map.png'),
-    ]);
+    await map.load(fallbackMapInfo, '/fallback-map.png');
     map.draw(emptyData, options());
     setConnection(false, 'Map preview · ROS monitor offline');
   }
 
   await refreshBounds(true);
-  await refreshTaskStatus();
+  await refreshDelivery();
   goLive();
 }
 
@@ -1280,7 +1124,7 @@ setInterval(playbackStep, 400);
 let refreshCycle = 0;
 setInterval(() => {
   if (state.auto) goLive();
-  refreshTaskStatus();
+  refreshDelivery();
   refreshCycle += 1;
   if (refreshCycle % 5 === 0) refreshBounds();
 }, 2000);
