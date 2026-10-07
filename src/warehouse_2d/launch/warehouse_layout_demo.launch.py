@@ -24,6 +24,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("gui", default_value="true"),
+            DeclareLaunchArgument("gazebo_verbose", default_value="false"),
             DeclareLaunchArgument("world", default_value=str(world_file)),
             GroupAction(actions=[
                 IncludeLaunchDescription(
@@ -32,7 +33,10 @@ def generate_launch_description():
                     ),
                     launch_arguments={
                         "world": LaunchConfiguration("world"),
-                        "verbose": "false",
+                        "verbose": LaunchConfiguration("gazebo_verbose"),
+                        # Stop dependent nodes if simulation exits; an active
+                        # web page alone must not conceal a failed server.
+                        "server_required": "true",
                         # The fleet's profile is not a Gazebo physics preset.
                         "profile": "",
                     }.items(),
@@ -44,7 +48,7 @@ def generate_launch_description():
                 period=2.0,
                 actions=[
                     ExecuteProcess(
-                        cmd=["gzclient"],
+                        cmd=["gzclient", "--verbose"],
                         output="screen",
                         condition=IfCondition(LaunchConfiguration("gui")),
                     )

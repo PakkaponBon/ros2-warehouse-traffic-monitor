@@ -192,6 +192,33 @@ the laptop. Keep a working PC simulation available until the target rehearsal
 has passed. Record the actual OS/JetPack, vehicle count and measured ratio with
 the rehearsal result.
 
-**Preparation status:** the source/packaging and launch checks can be verified
-on the current PC. The T208P has not been accessed or benchmarked in this
-session; its OS and complete-system performance remain to be confirmed.
+### Gazebo GUI cannot connect to master
+
+`Failed to connect to master in 30 seconds` means the client could not establish
+its TCP connection to the selected Gazebo master. Check the server and address
+before changing graphics drivers:
+
+```bash
+pgrep -a gzserver
+printf '%s\n' "${GAZEBO_MASTER_URI:-http://127.0.0.1:11345}"
+ss -ltnp 'sport = :11345'
+```
+
+The reComputer launcher defaults Gazebo transport to local IPv4, prints its
+address, and enables verbose server logs. Explicit environment overrides remain
+supported. The launch stops dependent nodes when `gzserver` exits. Keep the
+system launch terminal running when opening a separate `gzclient`; closing it
+with Ctrl+C also stops the simulation server.
+
+To restart with an explicit local address and capture the server error:
+
+```bash
+cd ~/warehouse_delivery_ws
+GAZEBO_MASTER_URI=http://127.0.0.1:11345 GAZEBO_IP=127.0.0.1 \
+  ./run_recomputer.sh gui:=true use_rviz:=false 2>&1 | tee /tmp/warehouse-startup.log
+```
+
+**Preparation status:** user-provided target logs confirm Ubuntu 22.04.5,
+L4T 36.4.4, and direct NVIDIA Orin OpenGL rendering. Source/packaging and launch
+checks are verified on the current PC. The T208P has not been accessed directly
+or benchmarked here; complete-system operation is still under investigation.

@@ -50,7 +50,8 @@ def launch_fleet(context):
     nodes = [
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(share / "launch" / "warehouse_layout_demo.launch.py")),
-            launch_arguments={"gui": value("gui")}.items()),
+            launch_arguments={"gui": value("gui"),
+                              "gazebo_verbose": value("gazebo_verbose")}.items()),
         Node(package="nav2_map_server", executable="map_server", name="map_server",
              parameters=[{"use_sim_time": True, "yaml_filename": str(map_path)}], output="screen"),
         Node(package="nav2_lifecycle_manager", executable="lifecycle_manager", name="map_lifecycle_manager",
@@ -156,6 +157,8 @@ def generate_launch_description():
     share = Path(get_package_share_directory("warehouse_2d"))
     return LaunchDescription([
         DeclareLaunchArgument("gui", default_value="true"),
+        DeclareLaunchArgument("gazebo_verbose", default_value="false",
+                              description="Print Gazebo server startup and transport diagnostics"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
         DeclareLaunchArgument("use_web", default_value="true"),
         DeclareLaunchArgument("profile", default_value="warehouse_delivery",

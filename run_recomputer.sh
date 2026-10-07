@@ -31,11 +31,14 @@ USAGE
   esac
 done
 command=("$workspace_dir/run_demo.sh" "$build_flag" vehicle_count:=4
-         "gui:=$gui" "use_rviz:=$rviz" traffic_mode:=roam
+         "gui:=$gui" "use_rviz:=$rviz" traffic_mode:=roam gazebo_verbose:=true
          "database:=$HOME/.ros/recomputer_demo.db" "${arguments[@]}")
 if [[ "$dry_run" == true ]]; then printf '%q ' "${command[@]}"; printf '\n'; exit 0; fi
 if [[ "$build_flag" == --skip-build ]]; then "$workspace_dir/check_recomputer.sh"; fi
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 # Every process is on this host; avoid accidental discovery of another demo.
 export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-1}"
+export GAZEBO_MASTER_URI="${GAZEBO_MASTER_URI:-http://127.0.0.1:11345}"
+export GAZEBO_IP="${GAZEBO_IP:-127.0.0.1}"
+printf 'Gazebo transport: master=%s; advertised address=%s\n' "$GAZEBO_MASTER_URI" "$GAZEBO_IP"
 exec "${command[@]}"
