@@ -37,9 +37,13 @@ for name in ('PIL', 'yaml', 'rclpy'):
         __import__(name)
     except ImportError:
         missing.append(name)
-for name in ('libgazebo_ros_planar_move.so', 'libgazebo_ros_ray_sensor.so', 'libgazebo_ros_state.so'):
+for package, name in (
+    ('gazebo_plugins', 'libgazebo_ros_planar_move.so'),
+    ('gazebo_plugins', 'libgazebo_ros_ray_sensor.so'),
+    ('gazebo_ros', 'libgazebo_ros_state.so'),
+):
     try:
-        plugin = pathlib.Path(get_package_prefix('gazebo_plugins'))/'lib'/name
+        plugin = pathlib.Path(get_package_prefix(package))/'lib'/name
         if not plugin.is_file(): missing.append(str(plugin))
     except PackageNotFoundError:
         pass
