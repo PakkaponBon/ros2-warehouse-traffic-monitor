@@ -12,8 +12,12 @@ from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import Odometry
 import rclpy
+from rclpy.duration import Duration
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
 from std_msgs.msg import String
+from tf2_ros import Buffer, TransformException, TransformListener
 
 from simulation_faults import FaultEventStore, vehicle_names
 
@@ -35,6 +39,7 @@ class Track:
     frame_id: str
     yaw: float = 0.0
     covariance_trace: float = 0.0
+    source_stamp_ns: int = None
 
 
 class TrafficRecorder(Node):
@@ -55,6 +60,8 @@ class TrafficRecorder(Node):
         self.declare_parameter("congestion_duration", 15.0)
         self.declare_parameter("traffic_vehicle_count", 8)
         self.declare_parameter("traffic_pose_source", "gazebo")
+        self.declare_parameter("validate_against_gazebo", True)
+        self.declare_parameter("validation_max_skew", 0.25)
         self.declare_parameter("model_states_frame", "map")
         self.declare_parameter("world_to_map_x", 0.0)
         self.declare_parameter("world_to_map_y", 0.0)
@@ -91,6 +98,14 @@ class TrafficRecorder(Node):
         )
         if self.traffic_pose_source not in ("gazebo", "amcl"):
             raise ValueError("traffic_pose_source must be 'gazebo' or 'amcl'")
+        self.validate_against_gazebo = bool(
+            self.get_parameter("validate_against_gazebo").value
+        )
+        self.validation_max_skew = float(self.get_parameter("validation_max_skew").value)
+        if not math.isfinite(self.validation_max_skew) or self.validation_max_skew <= 0.0:
+            raise ValueError("validation_max_skew must be finite and positive")
+        if self.traffic_pose_source == "gazebo" and not self.validate_against_gazebo:
+            raise ValueError("Gazebo pose source cannot be used with validation disabled")
         self.model_states_frame = str(
             self.get_parameter("model_states_frame").value
         )
@@ -130,7 +145,14 @@ class TrafficRecorder(Node):
         self.last_sim_time = None
         self.main_speed = None
         self.main_speed_received = None
-        self.create_subscription(ModelStates, "/gazebo/model_states", self.on_models, 10)
+        self.tf_buffer = None
+        if self.traffic_pose_source == "amcl":
+            self.tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
+            self.tf_listener = TransformListener(self.tf_buffer, self)
+        if self.validate_against_gazebo or self.traffic_pose_source == "gazebo":
+            self.create_subscription(
+                ModelStates, "/gazebo/model_states", self.on_models, qos_profile_sensor_data
+            )
         self.create_subscription(
             PoseWithCovarianceStamped, "/amcl_pose", self.on_amcl_pose, 10
         )
@@ -234,8 +256,9 @@ class TrafficRecorder(Node):
         self.create_timer(period, self.record_snapshot)
         self.get_logger().info(
             f"Recording warehouse traffic in {database_path}; "
-            f"traffic poses use {self.traffic_pose_source}; Gazebo truth is retained "
-            "only for localization error measurement"
+            f"traffic poses use {self.traffic_pose_source}; "
+            + ("Gazebo truth compares localization error"
+               if self.validate_against_gazebo else "Gazebo truth comparison disabled")
         )
         if self.fault_event_store is not None:
             self.get_logger().info(
@@ -245,6 +268,7 @@ class TrafficRecorder(Node):
 
     def on_models(self, message):
         now = time.monotonic()
+        stamp = self.get_clock().now().nanoseconds or None
         for name, pose, twist in zip(message.name, message.pose, message.twist):
             if not self.vehicle_pattern.match(name):
                 continue
@@ -259,7 +283,9 @@ class TrafficRecorder(Node):
             speed = math.hypot(twist.linear.x, twist.linear.y)
             yaw = self._yaw(pose.orientation) + self.world_to_map_yaw
             truth = Track(
-                x, y, speed, now, "gazebo_ground_truth", "map", yaw
+                x, y, speed, now, "gazebo_ground_truth", "map", yaw,
+                # ModelStates has no header; this is an approximate timestamp.
+                source_stamp_ns=stamp,
             )
             self.ground_truth[name] = truth
             if name != self.main_vehicle and self.traffic_pose_source == "gazebo":
@@ -298,6 +324,7 @@ class TrafficRecorder(Node):
             message.header.frame_id or "map",
             self._yaw(pose.orientation),
             float(covariance[0] + covariance[7] + covariance[35]),
+            source_stamp_ns=Time.from_msg(message.header.stamp).nanoseconds or None,
         )
 
     def on_traffic_odom(self, name, message):
@@ -307,8 +334,47 @@ class TrafficRecorder(Node):
         # AMCL does not publish another pose when a truck remains at a dock.
         # Refresh speed without refreshing the age of that localization pose.
         track = self.tracks.get(name)
-        if track is not None and track.source in {"amcl", "amcl_with_odom_speed"}:
+        if track is not None and track.source.startswith("amcl"):
             track.speed = self.traffic_speeds[name]
+
+    def refresh_traffic_tf(self):
+        """Keep localized stopped vehicles current using AMCL's live map-to-odom TF."""
+        if self.tf_buffer is None:
+            return
+        now = time.monotonic()
+        sim_now = self.get_clock().now().nanoseconds
+        for index in range(1, self.traffic_vehicle_count + 1):
+            name = f"vehicle_{index}"
+            previous = self.tracks.get(name)
+            # Require an AMCL pose first; odometry alone cannot establish a map pose.
+            if previous is None or not previous.source.startswith("amcl"):
+                continue
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    "map", f"{name}/base_link", Time()
+                )
+            except TransformException:
+                continue
+            stamp = Time.from_msg(transform.header.stamp).nanoseconds
+            age = (sim_now - stamp) / 1.0e9
+            if not -0.5 <= age <= 1.0:
+                continue
+            translation = transform.transform.translation
+            speed_fresh = (
+                name in self.traffic_speeds
+                and now - self.traffic_speed_received[name] <= self.stale_after
+            )
+            self.tracks[name] = Track(
+                translation.x,
+                translation.y,
+                self.traffic_speeds[name] if speed_fresh else 0.0,
+                now,
+                "amcl_tf_with_odom_speed" if speed_fresh else "amcl_tf",
+                "map",
+                self._yaw(transform.transform.rotation),
+                previous.covariance_trace,
+                source_stamp_ns=stamp,
+            )
 
     def on_amcl_pose(self, message):
         now = time.monotonic()
@@ -337,6 +403,7 @@ class TrafficRecorder(Node):
                 + message.pose.covariance[7]
                 + message.pose.covariance[35]
             ),
+            source_stamp_ns=Time.from_msg(message.header.stamp).nanoseconds or None,
         )
 
     def on_odom(self, message):
@@ -453,6 +520,7 @@ class TrafficRecorder(Node):
         )
 
     def record_snapshot(self):
+        self.refresh_traffic_tf()
         observed_at = time.time()
         sim_time = self.get_clock().now().nanoseconds / 1.0e9
         received_at = time.monotonic()
@@ -563,6 +631,8 @@ class TrafficRecorder(Node):
         )
 
     def _record_localization_metric(self, name, track, observed_at, sim_time):
+        if not self.validate_against_gazebo:
+            return
         # This table measures the direct 2-D ray sensors added to traffic
         # vehicles. The pre-existing main robot uses a converted 3-D cloud and
         # is intentionally excluded from this no-IMU experiment.
@@ -570,6 +640,14 @@ class TrafficRecorder(Node):
             return
         truth = self.ground_truth.get(name)
         if truth is None or time.monotonic() - truth.received_at > self.stale_after:
+            return
+        if track.frame_id.lstrip("/") != "map" or truth.frame_id.lstrip("/") != "map":
+            return
+        if track.source_stamp_ns is not None and truth.source_stamp_ns is not None:
+            skew = abs(track.source_stamp_ns - truth.source_stamp_ns) / 1e9
+        else:
+            skew = abs(track.received_at - truth.received_at)
+        if skew > getattr(self, "validation_max_skew", 0.25):
             return
         position_error = math.hypot(track.x - truth.x, track.y - truth.y)
         yaw_error = abs(

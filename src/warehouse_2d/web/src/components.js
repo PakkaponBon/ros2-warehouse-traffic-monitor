@@ -14,7 +14,7 @@ const MOTION_STATES = {
   loading: ['Loading cargo', 'waiting'],
   unloading: ['Unloading cargo', 'waiting'],
   task_planning: ['Planning side-task route', 'idle'],
-  turning: ['Turning normally', 'turning'],
+  turning: ['Moving', 'moving'],
   waiting_vehicle: ['Waiting for vehicle', 'waiting'],
   blocked_obstacle: ['Blocked by obstacle', 'blocked'],
   stalled: ['Commanded but not moving', 'blocked'],
@@ -69,7 +69,7 @@ export function renderLocalization(root, localization) {
   const summary = localization?.summary;
   const vehicles = localization?.vehicles || [];
   if (!summary?.samples) {
-    root.innerHTML = '<div class="empty">Waiting for AMCL and Gazebo comparison samples…</div>';
+    root.innerHTML = '<div class="empty">No AMCL-versus-Gazebo comparison in this period. Without an independent position reference, absolute position error cannot be measured here; check the vehicle path and sensor status instead.</div>';
     return;
   }
   const degrees = summary.mean_yaw_error * 180 / Math.PI;
@@ -181,20 +181,25 @@ export function renderHeatAreaSummary(root, value, metric = 'count') {
   };
   const [metricLabel, metricUnit] = labels[metric] || labels.count;
   const peak = value.time_details?.peaks?.[metric];
+  const delayPeak = value.time_details?.peaks?.slow_samples || (peak?.slow_samples ? peak : null);
   const stuck = value.time_details?.stuck;
+  const congestion = value.time_details?.congestion;
   const formatWindow = (window) => window
     ? `${new Date(window.start * 1000).toLocaleString()} → ${new Date(window.end * 1000).toLocaleString()}`
-    : 'No peak time available';
+    : 'No recorded period';
   const peakVehicles = peak?.vehicle_ids || [];
-  const slowVehicles = (peak?.slow_vehicle_states || []).map((vehicle) => (
+  const slowVehicles = (delayPeak?.slow_vehicle_states || []).map((vehicle) => (
     `${escapeHtml(vehicle.vehicle_id)} (${vehicle.states.map((state) => escapeHtml(state.replaceAll('_', ' '))).join(', ')})`
   ));
   const slowIds = new Set(peak?.slow_vehicle_ids || []);
-  const normalVehicles = peakVehicles.filter((vehicleId) => !slowIds.has(vehicleId));
+  const otherVehicles = peakVehicles.filter((vehicleId) => !slowIds.has(vehicleId));
   const peakValue = peak ? Number(peak[metric] || 0) : '—';
   const stuckText = stuck?.events
-    ? `${stuck.events} event(s), ${stuck.vehicles} vehicle(s)${stuck.peak ? ` · busiest ${formatWindow(stuck.peak)}` : ''}`
-    : 'None in this selected time range';
+    ? `${stuck.events} event(s), ${stuck.vehicles} vehicle(s) · ${(stuck.vehicle_ids || []).map(escapeHtml).join(', ') || 'IDs unavailable'} · latest ${formatWindow(stuck.latest || stuck.peak)}`
+    : 'None recorded in this area and period';
+  const congestionText = congestion?.events
+    ? `${congestion.events} event(s) · ${(congestion.vehicle_ids || []).map(escapeHtml).join(', ')} · latest ${formatWindow(congestion.latest)}`
+    : 'None recorded in this area and period';
 
   root.innerHTML = `<div class="heat-area-summary">
     <div class="heat-area-location"><b>Map area</b><span>x ${Number(value.x).toFixed(1)} m · y ${Number(value.y).toFixed(1)} m</span></div>
@@ -202,14 +207,16 @@ export function renderHeatAreaSummary(root, value, metric = 'count') {
       <div><small>${metricLabel}</small><strong>${Number(value[metric] || 0)}</strong><span>whole selected range</span></div>
       <div><small>Average speed</small><strong>${Number(value.average_speed || 0).toFixed(2)} m/s</strong><span>in this area</span></div>
       <div><small>Busiest period</small><strong>${peakValue}</strong><span>${metricUnit}</span></div>
-      <div><small>Slow at busiest time</small><strong>${peak ? Number(peak.slow_samples || 0) : '—'}</strong><span>samples</span></div>
+      <div><small>Most delay readings</small><strong>${delayPeak ? Number(delayPeak.slow_samples || 0) : '—'}</strong><span>readings, not seconds</span></div>
     </div>
     <dl class="heat-area-details">
-      <div><dt>Busiest time</dt><dd>${formatWindow(peak)}</dd></div>
+      <div><dt>Busiest time for selected measure</dt><dd>${formatWindow(peak)}</dd></div>
       <div><dt>Vehicles there</dt><dd>${peakVehicles.length ? peakVehicles.map(escapeHtml).join(', ') : 'None recorded'}</dd></div>
-      <div><dt>Slow or waiting</dt><dd>${slowVehicles.length ? slowVehicles.join(', ') : 'None recorded'}</dd></div>
-      <div><dt>Moving normally</dt><dd>${normalVehicles.length ? normalVehicles.map(escapeHtml).join(', ') : 'None recorded'}</dd></div>
+      <div><dt>Worst delay time</dt><dd>${delayPeak?.slow_samples ? formatWindow(delayPeak) : 'No delay recorded'}</dd></div>
+      <div><dt>Slow or blocked vehicles</dt><dd>${slowVehicles.length ? slowVehicles.join(', ') : 'None recorded'}</dd></div>
+      <div><dt>Other vehicles at busiest time</dt><dd>${otherVehicles.length ? otherVehicles.map(escapeHtml).join(', ') : 'None recorded'}</dd></div>
       <div><dt>Confirmed stuck</dt><dd>${stuckText}</dd></div>
+      <div><dt>Confirmed congestion nearby (within 2 m)</dt><dd>${congestionText}</dd></div>
     </dl>
   </div>`;
 }
@@ -224,14 +231,14 @@ export function renderHotspots(root, data) {
     data-events="${value.events}" data-first="${value.first_started || ''}" data-last="${value.last_ended || ''}"
     title="Show ${value.type.toLowerCase()} location on the map">
     <span><b style="color:${value.color}">${value.type}</b><small>x ${value.x.toFixed(1)} · y ${value.y.toFixed(1)}</small></span>
-    <span class="hotspot-count"><strong>${value.events}×</strong><small>View map</small></span>
+    <span class="hotspot-count"><strong>${value.events}×</strong><small>${(value.vehicle_ids || []).map(escapeHtml).join(', ') || 'Vehicle unknown'}</small><small>${value.first_started ? new Date(value.first_started * 1000).toLocaleString() : 'Time unknown'}</small></span>
   </button>`).join('') : '<div class="empty">No stuck or congestion events.</div>';
 }
 
 export function renderStuckTimeline(root, timeline) {
   const buckets = timeline?.buckets || [];
   if (!buckets.length) {
-    root.innerHTML = '<div class="empty">No stuck vehicles in this time range.</div>';
+    root.innerHTML = '<div class="empty">No confirmed stuck or congestion events in this period. Slow readings may still appear on the heatmap.</div>';
     return;
   }
   const bucketSeconds = timeline.bucket_seconds || 60;
@@ -239,20 +246,22 @@ export function renderStuckTimeline(root, timeline) {
     ? `${bucketSeconds / 60} minute${bucketSeconds === 60 ? '' : 's'}`
     : `${bucketSeconds / 3600} hour${bucketSeconds === 3600 ? '' : 's'}`;
   root.innerHTML = `
-    <p class="timeline-note">Busiest stuck location per ${bucketLabel}; newest first.</p>
+    <p class="timeline-note">Confirmed issues grouped per ${bucketLabel}; select a row to inspect its time and place.</p>
     <div class="stuck-time-list">${[...buckets].reverse().map((bucket) => {
       const hotspot = bucket.hotspot;
-      const time = new Date(bucket.start * 1000).toLocaleTimeString([], {
-        hour: '2-digit', minute: '2-digit',
-      });
+      const time = `${new Date(bucket.start * 1000).toLocaleString()} → ${new Date(bucket.end * 1000).toLocaleString()}`;
       const vehicles = hotspot.vehicle_ids.map(escapeHtml).join(', ');
+      const issueType = hotspot.congestion_events && hotspot.stuck_events ? 'Mixed issues'
+        : hotspot.congestion_events ? 'Congestion' : 'Stuck';
       return `<button type="button" class="stuck-time-row" data-stuck-time
         data-x="${hotspot.x}" data-y="${hotspot.y}"
-        data-time="${bucket.start}" data-count="${hotspot.vehicles}"
-        title="Show this stuck location on the map">
+        data-time="${bucket.start}" data-end="${bucket.end}"
+        data-inspect-end="${Math.min(bucket.end, Math.max(bucket.start + 1, hotspot.last_event_at || bucket.end))}"
+        data-count="${hotspot.events}" data-type="${issueType}" data-vehicles="${vehicles}"
+        title="Show ${issueType.toLowerCase()} during this period on the map">
         <span><b>${time}</b><small>x ${hotspot.x.toFixed(1)} · y ${hotspot.y.toFixed(1)}</small></span>
-        <span><strong>${hotspot.vehicles}</strong><small>at hotspot · ${bucket.total_vehicles} total</small></span>
-        <em>${vehicles}</em>
+        <span><strong>${hotspot.events} issue(s)</strong><small>${bucket.stuck_events || 0} stuck · ${bucket.congestion_events || 0} congestion</small></span>
+        <em>${vehicles} · ${bucket.total_vehicles} vehicle(s) in this time bucket</em>
       </button>`;
     }).join('')}</div>`;
 }

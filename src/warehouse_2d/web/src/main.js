@@ -8,7 +8,9 @@ import {
   getBounds,
   getMap,
   getDelivery,
+  getHealth,
   getState,
+  getSelectedTrack,
 } from './api.js';
 import {
   renderAnalytics,
@@ -23,6 +25,9 @@ import {
 } from './components.js';
 import { HEAT_METRICS, HEAT_GRADIENT, heatColor } from './heatmap.js';
 import { WarehouseMap } from './map.js';
+import { renderSignalIssues, vehicleSignalIssues } from './signal-issues.js';
+import { describeTrackQuality } from './track-quality.js';
+import { describeTrafficBucket, renderTrafficTimeline } from './traffic-timeline.js';
 
 const app = document.querySelector('#app');
 document.body.classList.add('dashboard');
@@ -88,9 +93,16 @@ app.innerHTML = `
               <option value="60">Last hour</option>
             </select>
           </label>
-          <button id="replayToggle" class="text-button" aria-expanded="false" aria-controls="replayControls">Replay history <span aria-hidden="true">⌄</span>
+          <button id="replayToggle" class="text-button" aria-expanded="false" aria-controls="replayControls">Replay controls <span aria-hidden="true">⌄</span>
           </button>
         </div>
+        <div class="history-range" aria-label="Choose a recorded date and time range">
+          <label class="field"><span>From date &amp; time</span><input id="rangeStart" type="datetime-local" step="1"></label>
+          <label class="field"><span>To date &amp; time</span><input id="rangeEnd" type="datetime-local" step="1"></label>
+          <button id="applyRange" type="button">Show this period</button>
+          <span id="rangeFeedback" class="range-feedback" role="status">Select a period to review recorded traffic.</span>
+        </div>
+        <p id="activePeriod" class="active-period" role="status">Loading recorded traffic…</p>
         <div id="replayControls" class="replay-controls" hidden>
           <p class="control-hint">Choose a recorded time, then jump to it or play forward.</p>
           <div class="control-row">
@@ -109,20 +121,6 @@ app.innerHTML = `
                 <option value="300">300×</option>
               </select>
             </label>
-            <details class="advanced">
-              <summary>Custom range</summary>
-              <div class="advanced-range">
-                <label class="field">
-                  <span>From</span>
-                  <input id="rangeStart" type="datetime-local" step="1">
-                </label>
-                <label class="field">
-                  <span>To</span>
-                  <input id="rangeEnd" type="datetime-local" step="1">
-                </label>
-                <button id="applyRange">Apply</button>
-              </div>
-            </details>
           </div>
           <div class="timeline-row">
             <span id="firstLog">First log —</span>
@@ -135,14 +133,14 @@ app.innerHTML = `
       <div id="dataNotice" class="data-notice" role="status" hidden>
       </div>
       <section data-workspace="overview" aria-label="Overview">
-        <div class="delivery-summary-heading"><span class="eyebrow">LIVE OPERATIONS</span><span id="deliveryConnection" class="delivery-connection" role="status">Connecting to fleet…</span></div>
+        <div id="liveSummaryHeading" class="delivery-summary-heading"><span class="eyebrow">LIVE OPERATIONS</span><span id="deliveryConnection" class="delivery-connection" role="status">Connecting to fleet…</span></div>
         <section id="deliveryMetrics" class="metrics delivery-metrics" aria-label="Live delivery summary"></section>
         <div class="overview-grid">
           <section class="panel map-panel">
             <div class="panel-head">
               <div>
                 <h2>Warehouse map</h2>
-                <span class="sub">Vehicle positions, docking points, and traffic</span>
+                <span class="sub">Vehicle positions, docking points, and traffic · 96 × 55.2 m site</span>
               </div>
               <details class="layer-menu">
                 <summary>Layers <span aria-hidden="true">⌄</span>
@@ -169,7 +167,6 @@ app.innerHTML = `
                       <option value="moving">Moving</option>
                       <option value="loading">Loading cargo</option>
                       <option value="unloading">Unloading cargo</option>
-                      <option value="turning">Turning normally</option>
                       <option value="waiting_vehicle">Waiting for vehicle</option>
                       <option value="blocked_obstacle">Blocked by obstacle</option>
                       <option value="stalled">Commanded but not moving</option>
@@ -191,6 +188,8 @@ app.innerHTML = `
               </div>
               <span id="mapViewHint" class="map-view-hint">Current vehicle positions</span>
             </div>
+            <p id="issuesEmptyState" class="issues-empty-state" role="status" hidden>No stuck or congestion events in this time window. Queued delivery jobs are separate from traffic issues.</p>
+            <div id="signalIssues" class="signal-issues" role="status" hidden></div>
             <section id="heatControls" class="heat-controls" aria-label="Traffic heat settings" hidden>
               <div class="heat-mode-note"><strong id="heatModeLabel">Waits & blockages</strong><span>Normal turning excluded</span></div>
               <details class="heat-settings"><summary>Adjust heatmap</summary>
@@ -249,7 +248,18 @@ app.innerHTML = `
             </section>
             <div id="mapSelection" class="map-selection">
               <div><span id="mapSelectionLabel" class="selection-label">EXPLORE THE MAP</span><p id="mapFocus" class="map-focus">Select a vehicle to see its route. Choose Traffic heat to explore busy areas.</p></div>
-              <button id="clearMapSelection" type="button" class="text-button" hidden>Clear selection</button>
+              <div class="map-selection-actions">
+                <label id="pathWindowControl" class="path-window-control" for="pathMinutes" hidden>Vehicle path
+                  <select id="pathMinutes">
+                    <option value="1">Last minute</option>
+                    <option value="5" selected>Last 5 minutes</option>
+                    <option value="15">Last 15 minutes</option>
+                    <option value="60">Last hour</option>
+                  </select>
+                </label>
+                <span id="pathStatus" class="path-status" role="status" hidden></span>
+                <button id="clearMapSelection" type="button" class="text-button" hidden>Clear selection</button>
+              </div>
             </div>
             <details id="areaPanel" class="map-area-details" hidden>
               <summary>Area traffic breakdown</summary>
@@ -274,6 +284,17 @@ app.innerHTML = `
             </div>
           </section>
         </div>
+        <section class="panel traffic-chart-panel" aria-label="Traffic by time">
+          <div class="panel-head">
+            <div><h2>When was traffic slow?</h2><span class="sub">Select a time bar to inspect that period on the map</span></div>
+            <button id="restoreChartRange" type="button" class="text-button" hidden>Back to full period</button>
+          </div>
+          <div class="traffic-chart-content">
+            <div class="traffic-chart-legend"><span><i class="traffic-legend-bar"></i>Vehicles with delay readings</span><span><i class="traffic-event stuck"></i>Stuck</span><span><i class="traffic-event congestion"></i>Congestion</span></div>
+            <div id="trafficChart" class="traffic-chart"><div class="empty">Waiting for recorded traffic…</div></div>
+            <p id="trafficChartDetail" class="traffic-chart-detail" role="status">Point to or select a time bar to see the vehicles and issues.</p>
+          </div>
+        </section>
         <section class="panel attention-panel">
           <div class="panel-head">
             <div>
@@ -307,8 +328,8 @@ app.innerHTML = `
           <section class="panel">
             <div class="panel-head">
               <div>
-                <h2>Stuck events over time</h2>
-                <span class="sub">When vehicles were unable to move</span>
+                <h2>Traffic issues by time</h2>
+                <span class="sub">Confirmed stuck and congestion · click to inspect the period</span>
               </div>
             </div>
             <div id="stuckTimeline" class="stuck-timeline">
@@ -370,11 +391,17 @@ const state = {
   lastTick: 0,
   debounce: null,
   selectedHotspot: null,
+  chartContext: null,
+  chartSelection: null,
   selectedHeat: null,
   selectedVehicle: null,
+  selectedTrack: null,
+  trackRequest: 0,
   delivery: null,
   deliveryLoading: false,
   deliveryConnected: false,
+  health: null,
+  healthConnected: false,
 };
 
 const emptyData = {
@@ -384,6 +411,7 @@ const emptyData = {
   tracks: [],
   stuck: [],
   stuck_timeline: { bucket_seconds: 60, buckets: [] },
+  traffic_timeline: { bucket_seconds: 60, buckets: [] },
   congestion: [],
   start: new Date().toISOString(),
   end: new Date().toISOString(),
@@ -436,9 +464,41 @@ function options() {
 }
 
 function redraw() {
+  $('#liveSummaryHeading').hidden = !state.auto;
+  $('#deliveryMetrics').hidden = !state.auto;
   if (!state.data) return;
-  map.draw(state.data, options());
+  const tracks = state.selectedVehicle && $('#pathLayer').checked
+    ? (state.selectedTrack?.vehicle_id === state.selectedVehicle ? [state.selectedTrack] : [])
+    : state.data.tracks;
+  map.draw({ ...state.data, tracks }, options());
   syncMapControls();
+}
+
+async function refreshSelectedTrack() {
+  if (!state.selectedVehicle || !state.data || !$('#pathLayer').checked) return;
+  const vehicleId = state.selectedVehicle;
+  const endEpoch = new Date(state.data.end).getTime();
+  if (!Number.isFinite(endEpoch)) return;
+  const end = new Date(endEpoch).toISOString();
+  const start = new Date(endEpoch - Number($('#pathMinutes').value) * 60_000).toISOString();
+  const requestId = ++state.trackRequest;
+  $('#pathStatus').textContent = 'Loading route…';
+  try {
+    const track = await getSelectedTrack(vehicleId, start, end);
+    if (requestId !== state.trackRequest || state.selectedVehicle !== vehicleId || !$('#pathLayer').checked) return;
+    state.selectedTrack = track;
+    $('#pathStatus').textContent = describeTrackQuality(track);
+    redraw();
+  } catch {
+    if (requestId !== state.trackRequest || state.selectedVehicle !== vehicleId) return;
+    const fallback = state.data?.tracks?.find((track) => track.vehicle_id === vehicleId);
+    state.selectedTrack = fallback ? {
+      vehicle_id: vehicleId,
+      points: fallback.points.filter((point) => point[2] * 1000 >= endEpoch - Number($('#pathMinutes').value) * 60_000),
+    } : null;
+    $('#pathStatus').textContent = 'Restart the monitor for a detailed route';
+    redraw();
+  }
 }
 
 function render(data) {
@@ -452,8 +512,11 @@ function render(data) {
     ));
     if (selected) selected.classList.add('selected');
     const vehicle = data.latest.find((item) => item.vehicle_id === state.selectedVehicle);
+    const recorded = vehicle && Number.isFinite(vehicle.observed_at)
+      ? ` · recorded ${new Date(vehicle.observed_at * 1000).toLocaleTimeString()}`
+      : ' · recording time unavailable';
     $('#mapFocus').textContent = vehicle
-      ? `${vehicle.vehicle_id} · ${vehicle.motion_state?.replaceAll('_', ' ') || 'State unavailable'} · ${vehicle.speed.toFixed(2)} m/s · x ${vehicle.x.toFixed(1)}, y ${vehicle.y.toFixed(1)}`
+      ? `${vehicle.vehicle_id} · ${vehicle.motion_state?.replaceAll('_', ' ') || 'State unavailable'} · ${vehicle.speed.toFixed(2)} m/s · x ${vehicle.x.toFixed(1)}, y ${vehicle.y.toFixed(1)}${recorded}`
       : `${state.selectedVehicle} · No current position in this time window`;
   }
   renderAnalytics($('#analytics'), data.analytics);
@@ -475,6 +538,15 @@ function render(data) {
   }
   renderHotspots($('#hotspots'), data);
   renderStuckTimeline($('#stuckTimeline'), data.stuck_timeline);
+  const chartData = state.chartContext?.data || data;
+  renderTrafficTimeline($('#trafficChart'), chartData.traffic_timeline, state.chartSelection);
+  $('#restoreChartRange').hidden = !state.chartContext;
+  const selectedBucket = chartData.traffic_timeline?.buckets.find(
+    (bucket) => Number(bucket.start) === Number(state.chartSelection)
+  );
+  $('#trafficChartDetail').textContent = selectedBucket
+    ? describeTrafficBucket(selectedBucket)
+    : 'Point to or select a time bar to see the vehicles and issues.';
   if (state.selectedHotspot) {
     const selected = [...document.querySelectorAll('#hotspots [data-hotspot]')].find((row) => (
       Math.abs(Number(row.dataset.x) - state.selectedHotspot.x) < 0.001
@@ -484,11 +556,14 @@ function render(data) {
     if (selected) selected.classList.add('selected');
   }
 
+  const period = `${new Date(data.start).toLocaleString()} — ${new Date(data.end).toLocaleString()}`;
+  $('#activePeriod').textContent = `${state.auto ? 'Live' : 'History'} · ${period}${data.samples ? '' : ' · No vehicle positions recorded'}`;
   $('#range').textContent = data.samples
-    ? `${new Date(data.start).toLocaleString()} — ${new Date(data.end).toLocaleString()}`
-    : 'Waiting for ROS traffic history';
+    ? `Traffic window: ${period}`
+    : `No recorded vehicle positions in ${period}`;
 
   redraw();
+  void refreshSelectedTrack();
 }
 
 function clearHeatSelection() {
@@ -543,7 +618,9 @@ function renderDelivery() {
   $('#stationCount').textContent = state.delivery?.stations?.length ?? '—';
   const online = state.deliveryConnected && state.delivery?.online;
   $('#deliveryConnection').classList.toggle('offline', !online);
-  $('#deliveryConnection').textContent = online ? 'Fleet online · automatic deliveries' : state.delivery ? 'Fleet updates unavailable' : 'Waiting for fleet';
+  $('#deliveryConnection').textContent = online
+    ? `Fleet online · ${state.delivery.mode === 'roam' ? 'continuous roaming' : 'automatic deliveries'}`
+    : state.delivery ? 'Fleet updates unavailable' : 'Waiting for fleet';
   const observedAt = state.delivery?.observed_at;
   $('#deliveryUpdated').textContent = observedAt
     ? `Last update ${new Date(observedAt * 1000).toLocaleTimeString()}` : 'Waiting for fleet updates';
@@ -566,6 +643,18 @@ async function refreshDelivery() {
   }
 }
 
+async function refreshHealth() {
+  if (!state.auto) return;
+  try {
+    state.health = await getHealth();
+    state.healthConnected = true;
+  } catch {
+    state.health = null;
+    state.healthConnected = false;
+  }
+  syncMapControls();
+}
+
 $('#deliveryJobs').addEventListener('click', (event) => {
   const button = event.target.closest('[data-delivery-vehicle]');
   if (button) {
@@ -575,19 +664,34 @@ $('#deliveryJobs').addEventListener('click', (event) => {
 });
 
 async function load(query) {
-  if (state.loading) return;
+  if (state.loading) {
+    state.pendingQuery = query;
+    return;
+  }
 
   state.loading = true;
   try {
-    render(await getState(query));
+    const data = await getState(query);
+    if (state.pendingQuery) return;
+    render(data);
     setConnection(true, `Updated ${new Date().toLocaleTimeString()}`);
     $('#dataNotice').hidden = true;
+    if (!state.auto) $('#rangeFeedback').textContent = 'Showing the selected recorded period.';
   } catch (error) {
+    if (state.pendingQuery) return;
     setConnection(false, 'Monitor offline');
     $('#dataNotice').hidden = false;
-    $('#dataNotice').textContent = 'Live updates are unavailable. Displayed data may be out of date. Reconnecting automatically…';
+    $('#dataNotice').textContent = state.auto
+      ? 'Live updates are unavailable. Displayed data may be out of date. Reconnecting automatically…'
+      : 'Could not load this recorded period. The displayed map may be from the previous period.';
+    if (!state.auto) $('#rangeFeedback').textContent = 'Could not load the selected period.';
   } finally {
     state.loading = false;
+    if (state.pendingQuery) {
+      const next = state.pendingQuery;
+      state.pendingQuery = null;
+      void load(next);
+    }
   }
 }
 
@@ -611,7 +715,7 @@ async function refreshBounds(initial = false) {
     if (initial || firstAvailableHistory || !$('#selectedTime').value) {
       state.cursor = bounds.last;
       setSelected(Math.max(bounds.first, bounds.last - 300));
-      $('#rangeStart').value = localInput(new Date(bounds.first * 1000));
+      $('#rangeStart').value = localInput(new Date(Math.max(bounds.first, bounds.last - 3600) * 1000));
       $('#rangeEnd').value = localInput(new Date(bounds.last * 1000));
     }
 
@@ -634,6 +738,8 @@ function pause(mode = 'PAUSED') {
 function loadFrame(epoch) {
   if (!state.bounds) return;
 
+  state.chartContext = null;
+  state.chartSelection = null;
   state.auto = false;
   state.cursor = clamp(epoch);
   updateReplay(state.cursor);
@@ -652,9 +758,12 @@ function loadFrame(epoch) {
 
 function goLive() {
   pause(null);
+  state.chartContext = null;
+  state.chartSelection = null;
   state.auto = true;
   state.playbackStart = null;
   setMode('LIVE');
+  $('#rangeFeedback').textContent = 'Select a period to review recorded traffic.';
 
   if (state.bounds) {
     state.cursor = state.bounds.last;
@@ -715,12 +824,22 @@ function playbackStep() {
 }
 
 function applyRange() {
-  const start = $('#rangeStart').value;
-  const end = $('#rangeEnd').value;
-  if (!start || !end) return;
+  const start = new Date($('#rangeStart').value).getTime();
+  const end = new Date($('#rangeEnd').value).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+    $('#rangeFeedback').textContent = 'Choose a valid From and To time; From must be earlier.';
+    return;
+  }
 
   pause('HISTORY');
+  state.chartContext = null;
+  state.chartSelection = null;
   state.auto = false;
+  state.playbackStart = null;
+  state.cursor = end / 1000;
+  updateReplay(state.cursor);
+  setSelected(state.cursor);
+  $('#rangeFeedback').textContent = 'Loading the selected recorded period…';
   load({ start: new Date(start).toISOString(), end: new Date(end).toISOString() });
 }
 
@@ -731,9 +850,18 @@ $('#applyRange').addEventListener('click', applyRange);
 
 $('#stateFilter').addEventListener('change', redraw);
 
+function showVehiclePathView() {
+  $('#vehicleLayer').checked = true;
+  $('#densityLayer').checked = false;
+  $('#stuckLayer').checked = false;
+  $('#jamLayer').checked = false;
+}
+
 function selectVehicle(card, scrollToMap = true) {
   clearHeatSelection();
+  showVehiclePathView();
   state.selectedVehicle = card.dataset.vehicle;
+  state.selectedTrack = null;
   state.selectedHotspot = null;
   document.querySelectorAll('#summaryRows [data-vehicle]').forEach((item) => {
     item.classList.toggle('selected', item === card);
@@ -749,6 +877,7 @@ function selectVehicle(card, scrollToMap = true) {
     : `${state.selectedVehicle} path`;
   showView('overview');
   redraw();
+  void refreshSelectedTrack();
   if (scrollToMap) $('.map-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -799,6 +928,90 @@ $('#hotspots').addEventListener('click', (event) => {
   if (row) selectHotspot(row);
 });
 
+function chartBucketFromTarget(target) {
+  const button = target.closest('[data-traffic-start]');
+  if (!button) return null;
+  return (state.chartContext?.data || state.data)?.traffic_timeline?.buckets.find(
+    (bucket) => Number(bucket.start) === Number(button.dataset.trafficStart)
+  ) || null;
+}
+
+$('#trafficChart').addEventListener('mouseover', (event) => {
+  const bucket = chartBucketFromTarget(event.target);
+  if (bucket) $('#trafficChartDetail').textContent = describeTrafficBucket(bucket);
+});
+$('#trafficChart').addEventListener('focusin', (event) => {
+  const bucket = chartBucketFromTarget(event.target);
+  if (bucket) $('#trafficChartDetail').textContent = describeTrafficBucket(bucket);
+});
+$('#trafficChart').addEventListener('mouseout', (event) => {
+  if (event.relatedTarget?.closest?.('[data-traffic-start]')) return;
+  const selected = (state.chartContext?.data || state.data)?.traffic_timeline?.buckets.find(
+    (bucket) => Number(bucket.start) === Number(state.chartSelection)
+  );
+  $('#trafficChartDetail').textContent = selected
+    ? describeTrafficBucket(selected)
+    : 'Point to or select a time bar to see the vehicles and issues.';
+});
+$('#trafficChart').addEventListener('click', (event) => {
+  const bucket = chartBucketFromTarget(event.target);
+  if (!bucket || bucket.end <= bucket.start) return;
+  if (!state.chartContext) {
+    state.chartContext = {
+      data: state.data,
+      query: { start: state.data.start, end: state.data.end },
+    };
+  }
+  state.chartSelection = bucket.start;
+  pause('HISTORY');
+  state.auto = false;
+  state.playbackStart = null;
+  clearMapSelection();
+  const issue = bucket.hotspot;
+  $('#vehicleLayer').checked = true;
+  $('#densityLayer').checked = !issue;
+  $('#stuckLayer').checked = Boolean(issue);
+  $('#jamLayer').checked = Boolean(issue);
+  if (issue) {
+    state.selectedHotspot = {
+      x: Number(issue.x), y: Number(issue.y),
+      type: bucket.stuck_events && bucket.congestion_events ? 'Mixed issues'
+        : bucket.congestion_events ? 'Congestion' : 'Stuck',
+      events: Number(issue.events),
+      first_started: Number(bucket.start),
+      last_ended: Number(issue.last_event_at || bucket.end),
+    };
+    map.focusAt(state.selectedHotspot);
+  }
+  state.cursor = Number(bucket.end);
+  setSelected(state.cursor);
+  updateReplay(state.cursor);
+  $('#rangeStart').value = localInput(new Date(Number(bucket.start) * 1000));
+  $('#rangeEnd').value = localInput(new Date(Number(bucket.end) * 1000));
+  $('#rangeFeedback').textContent = 'Showing the selected chart period; use Back to full period to return.';
+  $('#mapFocus').textContent = describeTrafficBucket(bucket);
+  void load({
+    start: new Date(Number(bucket.start) * 1000).toISOString(),
+    end: new Date(Number(bucket.end) * 1000).toISOString(),
+  });
+  redraw();
+  $('.map-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+$('#restoreChartRange').addEventListener('click', () => {
+  const context = state.chartContext;
+  if (!context) return;
+  state.chartContext = null;
+  state.chartSelection = null;
+  clearMapSelection();
+  state.cursor = new Date(context.query.end).getTime() / 1000;
+  updateReplay(state.cursor);
+  setSelected(state.cursor);
+  $('#rangeStart').value = localInput(new Date(context.query.start));
+  $('#rangeEnd').value = localInput(new Date(context.query.end));
+  $('#rangeFeedback').textContent = 'Showing the full recorded period.';
+  void load(context.query);
+});
+
 $('#stuckTimeline').addEventListener('click', (event) => {
   const row = event.target.closest('[data-stuck-time]');
   if (!row) return;
@@ -811,14 +1024,22 @@ $('#stuckTimeline').addEventListener('click', (event) => {
   state.selectedHotspot = {
     x: Number(row.dataset.x),
     y: Number(row.dataset.y),
-    type: 'Stuck',
+    type: row.dataset.type || 'Traffic issue',
     events: Number(row.dataset.count),
     first_started: Number(row.dataset.time),
-    last_ended: Number(row.dataset.time),
+    last_ended: Number(row.dataset.inspectEnd || row.dataset.end),
   };
   map.focusAt(state.selectedHotspot);
-  setSelected(Number(row.dataset.time));
-  $('#mapFocus').textContent = `Stuck at ${new Date(Number(row.dataset.time) * 1000).toLocaleTimeString()} · x ${state.selectedHotspot.x.toFixed(1)} · y ${state.selectedHotspot.y.toFixed(1)} · ${state.selectedHotspot.events} vehicle(s)`;
+  pause('HISTORY');
+  state.auto = false;
+  state.cursor = Number(row.dataset.inspectEnd || row.dataset.end);
+  setSelected(state.cursor);
+  updateReplay(state.cursor);
+  $('#rangeStart').value = localInput(new Date(Number(row.dataset.time) * 1000));
+  $('#rangeEnd').value = localInput(new Date(state.cursor * 1000));
+  $('#rangeFeedback').textContent = 'Showing the selected issue period.';
+  $('#mapFocus').textContent = `${state.selectedHotspot.type} · ${new Date(Number(row.dataset.time) * 1000).toLocaleString()} · ${row.dataset.vehicles} · x ${state.selectedHotspot.x.toFixed(1)}, y ${state.selectedHotspot.y.toFixed(1)}`;
+  load({ start: new Date(Number(row.dataset.time) * 1000).toISOString(), end: new Date(state.cursor * 1000).toISOString() });
   showView('overview');
   redraw();
   $('.map-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -843,7 +1064,9 @@ function selectInsight(row) {
   } else {
     const vehicleId = row.dataset.vehicle;
     const path = state.data?.analytics?.worst_path;
+    showVehiclePathView();
     state.selectedVehicle = vehicleId;
+    state.selectedTrack = null;
     state.selectedHotspot = null;
     $('#pathLayer').checked = true;
     document.querySelectorAll('#summaryRows [data-vehicle]').forEach((item) => {
@@ -855,6 +1078,7 @@ function selectInsight(row) {
   }
   showView('overview');
   redraw();
+  if (state.selectedVehicle) void refreshSelectedTrack();
   $('.map-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -874,7 +1098,6 @@ $('#analytics').addEventListener('keydown', (event) => {
 [
   'labelLayer',
   'gridLayer',
-  'pathLayer',
   'vehicleLayer',
   'densityLayer',
   'stuckLayer',
@@ -885,6 +1108,18 @@ $('#analytics').addEventListener('keydown', (event) => {
   'heatFilter',
   'heatOpacity',
 ].forEach((id) => $(`#${id}`).addEventListener('input', redraw));
+
+$('#pathLayer').addEventListener('input', () => {
+  state.trackRequest += 1;
+  if ($('#pathLayer').checked) void refreshSelectedTrack();
+  else state.selectedTrack = null;
+  redraw();
+});
+$('#pathMinutes').addEventListener('change', () => {
+  state.selectedTrack = null;
+  redraw();
+  void refreshSelectedTrack();
+});
 
 $('#heatMetric').addEventListener('change', () => {
   if (state.selectedHeat) {
@@ -906,7 +1141,7 @@ $('#trailMinutes').addEventListener('change', () => (
   state.auto ? goLive() : state.cursor !== null && loadFrame(state.cursor)
 ));
 
-['selectedTime', 'rangeStart', 'rangeEnd'].forEach((id) => (
+['selectedTime'].forEach((id) => (
   $(`#${id}`).addEventListener('focus', () => {
     state.auto = false;
     pause('PAUSED');
@@ -974,12 +1209,27 @@ function syncMapControls() {
   document.querySelectorAll('[data-map-view]').forEach((button) => {
     button.setAttribute('aria-pressed', String(button.dataset.mapView === view));
   });
-  $('#mapViewHint').textContent = { vehicles: 'Current vehicle positions', heat: 'Traffic in the selected time window', issues: 'Recorded stuck & congestion locations', custom: 'Custom layer selection' }[view];
+  const noRecordedIssues = view === 'issues' && state.data
+    && !state.data.stuck.length && !state.data.congestion.length;
+  const liveSignals = view === 'issues' && state.auto;
+  const signalCount = liveSignals && state.healthConnected
+    ? vehicleSignalIssues(state.health).alerts.length : 0;
+  $('#mapViewHint').textContent = signalCount
+    ? `${signalCount} live vehicle signal alert${signalCount === 1 ? '' : 's'}`
+    : noRecordedIssues
+      ? 'No recorded traffic issues in this time window'
+      : { vehicles: state.auto ? 'Live vehicle positions' : 'Vehicle positions near the end of this recorded period', heat: 'Recorded delay readings in the selected period', issues: 'Recorded stuck & congestion locations', custom: 'Custom layer selection' }[view];
+  $('#issuesEmptyState').hidden = !noRecordedIssues;
+  $('#signalIssues').hidden = !liveSignals;
+  if (liveSignals) renderSignalIssues($('#signalIssues'), state.health, state.healthConnected);
   $('#vehicleLegend').hidden = !vehicles;
   $('#heatControls').hidden = !heat;
   $('#heatInsights').hidden = !heat;
   if (heat) syncHeatInsights();
   $('#issuesLegend').hidden = !$('#stuckLayer').checked && !$('#jamLayer').checked;
+  const showPathControl = Boolean(state.selectedVehicle && $('#pathLayer').checked);
+  $('#pathWindowControl').hidden = !showPathControl;
+  $('#pathStatus').hidden = !showPathControl;
   const selected = state.selectedVehicle || state.selectedHeat || state.selectedHotspot;
   $('#mapSelection').classList.toggle('has-selection', Boolean(selected));
   $('#clearMapSelection').hidden = !selected;
@@ -1033,6 +1283,7 @@ $('#clearMapSelection').addEventListener('click', clearMapSelection);
 document.querySelectorAll('[data-map-view]').forEach((button) => {
   button.addEventListener('click', () => {
     const view = button.dataset.mapView;
+    if (view !== 'vehicles' && state.selectedVehicle) clearMapSelection();
     $('#vehicleLayer').checked = true;
     $('#densityLayer').checked = view === 'heat';
     $('#stuckLayer').checked = view === 'issues';
@@ -1110,12 +1361,13 @@ async function boot() {
   } catch {
     await map.load(fallbackMapInfo, '/fallback-map.png');
     map.draw(emptyData, options());
-    setConnection(false, 'Map preview · ROS monitor offline');
+    setConnection(false, 'Waiting for a saved SLAM map · ROS monitor offline');
   }
 
   await refreshBounds(true);
   await refreshDelivery();
   goLive();
+  void refreshHealth();
 }
 
 boot();
@@ -1125,6 +1377,7 @@ let refreshCycle = 0;
 setInterval(() => {
   if (state.auto) goLive();
   refreshDelivery();
+  refreshHealth();
   refreshCycle += 1;
   if (refreshCycle % 5 === 0) refreshBounds();
 }, 2000);

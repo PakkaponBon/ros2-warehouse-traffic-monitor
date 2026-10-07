@@ -17,18 +17,33 @@ function formatTimeWindow(start, end) {
 export function heatTooltipLabel(value, metric = 'count') {
   const metricValue = Number(value[metric] || 0);
   const description = metric === 'vehicles'
-    ? `${metricValue} unique vehicles`
+    ? `${metricValue} different vehicles visited`
     : metric === 'slow_samples'
-      ? `${metricValue} slow samples`
-      : `${metricValue} position samples`;
+      ? `${metricValue} delay readings (not seconds)`
+      : `${metricValue} position readings (not seconds)`;
   const lines = [
     `Area x ${Number(value.x).toFixed(1)}, y ${Number(value.y).toFixed(1)}`,
-    `${description} · average speed ${Number(value.average_speed || 0).toFixed(2)} m/s`,
+    `${description} in the selected period · average speed ${Number(value.average_speed || 0).toFixed(2)} m/s`,
   ];
-  const peak = value.time_details?.peaks?.[metric];
-  if (peak) {
-    lines.push(`Busiest: ${formatTimeWindow(peak.start, peak.end)}`);
-    if (peak.vehicle_ids?.length) lines.push(`Vehicles: ${peak.vehicle_ids.join(', ')}`);
+  const details = value.time_details || {};
+  const delay = details.peaks?.slow_samples || details.peaks?.[metric];
+  if (delay?.slow_samples > 0) {
+    lines.push(`Worst delay: ${formatTimeWindow(delay.start, delay.end)}`);
+    lines.push(`Slow / blocked: ${(delay.slow_vehicle_states || []).map((item) =>
+      `${item.vehicle_id} (${item.states.join(', ').replaceAll('_', ' ')})`).join('; ') || delay.slow_vehicle_ids?.join(', ') || 'vehicle IDs unavailable'}`);
+  }
+  const stuck = details.stuck;
+  if (stuck?.events) {
+    lines.push(`Confirmed stuck: ${stuck.events} event(s) · ${stuck.vehicle_ids?.join(', ') || 'vehicle IDs unavailable'}`);
+    if (stuck.latest) lines.push(`Latest stuck: ${formatTimeWindow(stuck.latest.start, stuck.latest.end)}`);
+  }
+  const congestion = details.congestion;
+  if (congestion?.events) {
+    lines.push(`Confirmed congestion nearby: ${congestion.events} event(s) · ${congestion.vehicle_ids?.join(', ') || 'vehicle IDs unavailable'}`);
+    if (congestion.latest) lines.push(`Latest congestion: ${formatTimeWindow(congestion.latest.start, congestion.latest.end)}`);
+  }
+  if (!delay?.slow_samples && !stuck?.events && !congestion?.events) {
+    lines.push('No recorded delay or confirmed issue in this area');
   }
   lines.push('Click for full details');
   return lines.join('\n');
@@ -77,7 +92,7 @@ export class WarehouseMap {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.info = { origin: [-18.6, -26.3], resolution: 0.05, width: 607, height: 1004 };
+    this.info = { origin: [-50, -29.6], resolution: 0.1, width: 1000, height: 592 };
     this.image = null;
     this.hits = [];
     this.focused = null;
@@ -348,32 +363,6 @@ export class WarehouseMap {
     });
   }
 
-  drawPathArrows(segment, color) {
-    let distanceSinceArrow = 0;
-    for (let index = 1; index < segment.length; index += 1) {
-      const first = this.project(segment[index - 1].x, segment[index - 1].y);
-      const second = this.project(segment[index].x, segment[index].y);
-      distanceSinceArrow += Math.hypot(second.x - first.x, second.y - first.y);
-      if (distanceSinceArrow < 90) continue;
-      distanceSinceArrow = 0;
-      const angle = Math.atan2(second.y - first.y, second.x - first.x);
-      this.ctx.save();
-      this.ctx.translate(second.x, second.y);
-      this.ctx.rotate(angle);
-      this.ctx.fillStyle = color;
-      this.ctx.strokeStyle = '#071521';
-      this.ctx.lineWidth = 2;
-      this.ctx.beginPath();
-      this.ctx.moveTo(8, 0);
-      this.ctx.lineTo(-5, -5);
-      this.ctx.lineTo(-2, 0);
-      this.ctx.lineTo(-5, 5);
-      this.ctx.closePath();
-      this.ctx.fill();
-      this.ctx.stroke();
-      this.ctx.restore();
-    }
-  }
 
   drawPaths(data) {
     if (!this.focusedVehicle) return;
@@ -398,7 +387,6 @@ export class WarehouseMap {
         this.ctx.shadowBlur = 0;
         this.ctx.stroke();
         this.ctx.shadowBlur = 0;
-        this.drawPathArrows(segment, color);
       }
       this.ctx.restore();
     });
@@ -462,8 +450,11 @@ export class WarehouseMap {
       this.ctx.textAlign = 'center'; this.ctx.fillText(label, 0, -17);
     }
     this.ctx.restore();
+    const recorded = Number.isFinite(vehicle.observed_at)
+      ? `Recorded ${new Date(vehicle.observed_at * 1000).toLocaleString()}`
+      : 'Recording time unavailable';
     this.hits.push({ x, y, radius: 15 * unit, priority: 3, vehicleId: vehicle.vehicle_id,
-      label: `${vehicle.vehicle_id} · ${state.replaceAll('_', ' ')} · ${vehicle.speed.toFixed(2)} m/s\nClick to see this vehicle’s route` });
+      label: `${vehicle.vehicle_id} · ${state.replaceAll('_', ' ')} · ${vehicle.speed.toFixed(2)} m/s\n${recorded} · x ${vehicle.x.toFixed(1)}, y ${vehicle.y.toFixed(1)}\nClick to see this vehicle’s route` });
   }
 
   drawUwbTags() {
@@ -515,7 +506,7 @@ export class WarehouseMap {
       this.ctx.fillText(String(index + 1).padStart(2, '0'), 0, 3);
       this.ctx.restore();
       this.hits.push({ x, y, radius: 13 * unit, priority: 2,
-        label: `${String(index + 1).padStart(2, '0')} · ${station.label}\nPickup & drop-off point${docked ? ' · loading / unloading' : ''}` });
+        label: `${String(index + 1).padStart(2, '0')} · ${station.label}\nPickup & drop-off route goal${docked ? ' · loading / unloading' : ''}${Number.isFinite(station.goal_offset_m) ? `\nMap-cell adjustment ${station.goal_offset_m.toFixed(2)} m from configured point` : ''}` });
     });
   }
 
@@ -531,8 +522,8 @@ export class WarehouseMap {
     if (options.heat) this.drawHeat(data, options.heatFilter, options.heatMetric, options.heatOpacity);
     if (options.paths) this.drawPaths(data);
     if (options.stations) this.drawStations(options);
-    if (options.stuck) data.stuck.slice(0, 12).forEach((value) => this.circle(value, 8 + Math.min(10, Math.log2(value.events + 1) * 2), '#ffbf47cc', `${value.events} stuck event(s) · ${Math.round(value.duration)} seconds`, '#fff0bd', 'Stuck'));
-    if (options.congestion) data.congestion.slice(0, 12).forEach((value) => this.circle(value, 10 + Math.min(14, value.max_vehicles * 2), '#ff5263b8', `${value.events} congestion event(s) · up to ${value.max_vehicles} vehicles`, '#ff9ba5', 'Congestion'));
+    if (options.stuck) data.stuck.slice(0, 12).forEach((value) => this.circle(value, 8 + Math.min(10, Math.log2(value.events + 1) * 2), '#ffbf47cc', `${value.events} confirmed stuck event(s)\nVehicles: ${value.vehicle_ids?.join(', ') || value.vehicle_id}\nRecorded between ${formatTimeWindow(value.first_started, value.last_ended)}`, '#fff0bd', 'Stuck'));
+    if (options.congestion) data.congestion.slice(0, 12).forEach((value) => this.circle(value, 10 + Math.min(14, value.max_vehicles * 2), '#ff5263b8', `${value.events} congestion event(s) · up to ${value.max_vehicles} vehicles\nVehicles: ${value.vehicle_ids?.join(', ') || value.vehicle_id}\nRecorded between ${formatTimeWindow(value.first_started, value.last_ended)}`, '#ff9ba5', 'Congestion'));
     if (options.vehicles) {
       const visibleVehicles = options.stateFilter === 'all'
         ? data.latest
@@ -617,8 +608,10 @@ export class WarehouseMap {
 
   selectItem(event) {
     if (this.suppressClick) { this.suppressClick = false; return; }
-    const hit = this.hitAt(event);
-    if (hit?.vehicleId && this.onVehicleSelect) this.onVehicleSelect(hit.vehicleId);
+    const heatFirst = this.lastOptions?.heat && !this.lastOptions?.stuck && !this.lastOptions?.congestion;
+    const hit = (heatFirst && this.hitAt(event, true)) || this.hitAt(event);
+    if (hit?.heatValue && heatFirst && this.onHeatSelect) this.onHeatSelect(hit.heatValue, hit.heatMetric);
+    else if (hit?.vehicleId && this.onVehicleSelect) this.onVehicleSelect(hit.vehicleId);
     else if (hit?.eventValue && this.onEventSelect) this.onEventSelect(hit.eventValue, hit.eventType);
     else this.selectHeat(event);
     this.tooltip.style.display = 'none';
@@ -633,7 +626,8 @@ export class WarehouseMap {
 
   showTooltip(event) {
     if (this.drag?.moved) return;
-    const hit = this.hitAt(event);
+    const heatFirst = this.lastOptions?.heat && !this.lastOptions?.stuck && !this.lastOptions?.congestion;
+    const hit = (heatFirst && this.hitAt(event, true)) || this.hitAt(event);
     if (!hit) { this.tooltip.style.display = 'none'; return; }
     this.tooltip.textContent = hit.label; this.tooltip.style.display = 'block';
     const wrapper = this.canvas.parentElement;

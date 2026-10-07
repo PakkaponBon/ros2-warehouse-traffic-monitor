@@ -129,6 +129,10 @@ KNOWN_MOTION_STATES = {
     "sensor_wait",
     "loading",
     "unloading",
+    "side_task",
+    "returning_route",
+    "side_work",
+    "task_planning",
     "unknown",
 }
 
@@ -164,19 +168,21 @@ def classify_motion_state(
     if state not in KNOWN_MOTION_STATES:
         state = "unknown"
 
+    # A controller interlock or blockage remains visible even while the
+    # vehicle is still coasting or turning to clear the obstruction.
+    if state in {"localizing", "sensor_wait", "waiting_vehicle", "blocked_obstacle"}:
+        return state, True
     if speed >= float(slow_speed):
-        if state in {"waiting_vehicle", "blocked_obstacle"}:
+        if state in {"side_task", "returning_route"}:
             return state, True
         return "moving", True
     if state == "turning" or commanded_angular >= float(turning_speed):
         return "turning", True
-    if state in {"waiting_vehicle", "blocked_obstacle"}:
+    if state in {"planning", "task_planning"}:
         return state, True
-    if state in {"planning", "localizing", "sensor_wait"}:
-        return state, True
-    if state in {"idle", "loading", "unloading"}:
+    if state in {"idle", "loading", "unloading", "side_work"}:
         return state, False
-    if state in {"moving", "stalled", "stuck"} or commanded_linear >= float(command_speed):
+    if state in {"moving", "stalled", "stuck", "side_task", "returning_route"} or commanded_linear >= float(command_speed):
         return "stalled", True
     return "idle", False
 

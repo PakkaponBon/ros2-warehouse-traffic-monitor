@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { deliveryPhase, deliverySummary, renderDeliveryJobs, renderStationActivity } from '../src/delivery.js';
+import { deliveryPhase, deliverySummary, renderDeliveryJobs, renderDeliveryMetrics, renderDeliveryFleet, renderStationActivity } from '../src/delivery.js';
 import { getDelivery } from '../src/api.js';
 
 const fleet = {
@@ -18,6 +18,22 @@ test('live delivery counts exclude idle vehicles and show completed jobs for thi
   assert.equal(deliverySummary(fleet, false), null);
   assert.equal(deliverySummary({ ...fleet, online: false }), null);
   assert.equal(deliverySummary(null), null);
+});
+
+test('roaming shows destinations, arrivals and coverage without cargo progress', () => {
+  const snapshot = { online: true, mode: 'roam', pending_jobs: 0, stations: [],
+    coverage: { visited_sectors: 12, reachable_sectors: 91 },
+    vehicles: [{ vehicle_id: 'vehicle_1', phase: 'roaming', destination: { x: 24.5, y: -10 },
+      motion_state: 'turning', carrying: false, completed_goals: 3 }] };
+  assert.deepEqual(deliverySummary(snapshot), { vehicles: 1, active: 1, completed: 3, queued: 0 });
+  const root = {};
+  renderDeliveryMetrics(root, snapshot, true);
+  assert.match(root.innerHTML, /Goals reached/);
+  assert.match(root.innerHTML, /91 reachable sectors/);
+  renderDeliveryFleet(root, [], snapshot, null);
+  assert.match(root.innerHTML, /Goal x 24.5, y -10.0 m/);
+  assert.match(root.innerHTML, /Turning · 3 goals reached/);
+  assert.doesNotMatch(root.innerHTML, /Loading cargo|aria-current="step"/);
 });
 
 test('phase progress distinguishes travelling, loading and unloading', () => {

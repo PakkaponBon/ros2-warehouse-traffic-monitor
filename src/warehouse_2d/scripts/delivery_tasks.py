@@ -31,9 +31,27 @@ def load_delivery_config(path):
             for key in keys:
                 if not math.isfinite(float(point[key])):
                     raise ValueError(f"non-finite {key} in delivery config")
-    jobs = data.get("jobs", [])
-    if not jobs:
-        raise ValueError("delivery config requires at least one job")
+    flows = data.get("production_flows")
+    if flows is not None:
+        if not isinstance(flows, list) or not flows:
+            raise ValueError("production_flows requires at least one flow")
+        visited = set()
+        jobs = []
+        for flow in flows:
+            if not isinstance(flow, list) or len(flow) < 2:
+                raise ValueError("each production flow requires at least two stations")
+            if any(station not in ids for station in flow):
+                raise ValueError("production flow references an unknown station")
+            if visited.intersection(flow) or len(set(flow)) != len(flow):
+                raise ValueError("production flows must use unique stations")
+            visited.update(flow)
+            jobs.extend({"pickup": start, "dropoff": end}
+                        for start, end in zip(flow, flow[1:]))
+        data["jobs"] = jobs
+    else:
+        jobs = data.get("jobs", [])
+        if not jobs:
+            raise ValueError("delivery config requires at least one job")
     for job in jobs:
         if job["pickup"] not in ids or job["dropoff"] not in ids:
             raise ValueError("job references an unknown station")
@@ -74,8 +92,17 @@ class DeliveryFleet:
             }
             for station in config["stations"]
         }
-        self.pending = deque((job["pickup"], job["dropoff"])
-                             for job in config["jobs"])
+        self.flows = [tuple(flow) for flow in config.get("production_flows", [])]
+        self.workflow_for_job = {
+            (flow[index], flow[index + 1]): (flow_number, index)
+            for flow_number, flow in enumerate(self.flows)
+            for index in range(len(flow) - 1)
+        }
+        if self.flows:
+            self.pending = deque((flow[0], flow[1]) for flow in self.flows)
+        else:
+            self.pending = deque((job["pickup"], job["dropoff"])
+                                 for job in config["jobs"])
         self.repeat = config.get("repeat_jobs", True)
         self.loading_seconds = config["loading_seconds"]
         self.unloading_seconds = config["unloading_seconds"]
@@ -141,7 +168,14 @@ class DeliveryFleet:
             task.phase = "to_dropoff"
             return task.phase
         self.completed[name] += 1
-        if self.repeat:
+        if self.flows:
+            flow_number, index = self.workflow_for_job[(task.pickup, task.dropoff)]
+            flow = self.flows[flow_number]
+            if index + 2 < len(flow):
+                self.pending.append((flow[index + 1], flow[index + 2]))
+            elif self.repeat:
+                self.pending.append((flow[0], flow[1]))
+        elif self.repeat:
             self.pending.append((task.pickup, task.dropoff))
         self.tasks[name] = None
         return "completed"

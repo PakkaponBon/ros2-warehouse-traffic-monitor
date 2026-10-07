@@ -1,0 +1,261 @@
+# 96 x 55.2 m mining-truck assembly plant; all positions are world metres.
+# Each line moves SW material racks -> NW component shops -> NE truck build -> SE test/dispatch.
+# The next stage is queued only after the previous delivery finishes.
+loading_seconds: 4.0
+unloading_seconds: 4.0
+repeat_jobs: true
+spawns:
+- x: -24.0
+  y: -2.4
+  yaw: 0.0
+- x: 24.0
+  y: -2.4
+  yaw: 3.141592653589793
+- x: -24.0
+  y: 25.2
+  yaw: 0.0
+- x: 24.0
+  y: 25.2
+  yaw: 3.141592653589793
+stations:
+- id: receiving_sw
+  label: Line A · Material intake
+  x: -40.0
+  y: -18.7
+- id: warehouse_bay_sw
+  label: Line A · Rack picking
+  x: -24.0
+  y: -18.7
+- id: process_north_sw
+  label: Line A · Component kit release
+  x: -8.0
+  y: -18.7
+- id: receiving_nw
+  label: Line A · Frame Cutting
+  x: -36.0
+  y: 7.5
+- id: warehouse_bay_nw
+  label: Line A · Axle Machining
+  x: -23.0
+  y: 7.5
+- id: process_north_nw
+  label: Line A · Suspension Fitting
+  x: -10.0
+  y: 7.5
+- id: receiving_ne
+  label: Line A · Haul-truck chassis integration
+  x: 8.0
+  y: 7.9
+- id: warehouse_bay_ne
+  label: Line A · Diesel and gearbox installation
+  x: 24.0
+  y: 7.9
+- id: process_north_ne
+  label: Line A · Operator cab installation
+  x: 40.0
+  y: 7.9
+- id: receiving_se
+  label: Line A · Dump bed and hydraulic lift
+  x: 8.0
+  y: -18.6
+- id: warehouse_bay_se
+  label: Line A · Load and safety testing
+  x: 24.0
+  y: -18.6
+- id: process_north_se
+  label: Line A · Finished haul truck dispatch
+  x: 40.0
+  y: -18.6
+- id: process_south_sw
+  label: Line B · Material intake
+  x: -40.0
+  y: -14.2
+- id: fabrication_north_sw
+  label: Line B · Rack picking
+  x: -24.0
+  y: -14.2
+- id: fabrication_south_sw
+  label: Line B · Component kit release
+  x: -8.0
+  y: -14.2
+- id: process_south_nw
+  label: Line B · Engine Block
+  x: -36.0
+  y: 12.5
+- id: fabrication_north_nw
+  label: Line B · Gearbox Assembly
+  x: -23.0
+  y: 12.5
+- id: fabrication_south_nw
+  label: Line B · Cooling Pack
+  x: -10.0
+  y: 12.5
+- id: process_south_ne
+  label: Line B · Haul-truck chassis integration
+  x: 8.0
+  y: 12.9
+- id: fabrication_north_ne
+  label: Line B · Diesel and gearbox installation
+  x: 24.0
+  y: 12.9
+- id: fabrication_south_ne
+  label: Line B · Operator cab installation
+  x: 40.0
+  y: 12.9
+- id: process_south_se
+  label: Line B · Dump bed and hydraulic lift
+  x: 8.0
+  y: -13.6
+- id: fabrication_north_se
+  label: Line B · Load and safety testing
+  x: 24.0
+  y: -13.6
+- id: fabrication_south_se
+  label: Line B · Finished haul truck dispatch
+  x: 40.0
+  y: -13.6
+- id: shipping_sw
+  label: Line C · Material intake
+  x: -40.0
+  y: -9.7
+- id: packing_sw
+  label: Line C · Rack picking
+  x: -24.0
+  y: -9.7
+- id: parts_sorting_sw
+  label: Line C · Component kit release
+  x: -8.0
+  y: -9.7
+- id: shipping_nw
+  label: Line C · Dump-Bed Panels
+  x: -36.0
+  y: 17.5
+- id: packing_nw
+  label: Line C · Hydraulic Rams
+  x: -23.0
+  y: 17.5
+- id: parts_sorting_nw
+  label: Line C · Bed Pivot
+  x: -10.0
+  y: 17.5
+- id: shipping_ne
+  label: Line C · Haul-truck chassis integration
+  x: 8.0
+  y: 17.9
+- id: packing_ne
+  label: Line C · Diesel and gearbox installation
+  x: 24.0
+  y: 17.9
+- id: parts_sorting_ne
+  label: Line C · Operator cab installation
+  x: 40.0
+  y: 17.9
+- id: shipping_se
+  label: Line C · Dump bed and hydraulic lift
+  x: 8.0
+  y: -8.6
+- id: packing_se
+  label: Line C · Load and safety testing
+  x: 24.0
+  y: -8.6
+- id: parts_sorting_se
+  label: Line C · Finished haul truck dispatch
+  x: 40.0
+  y: -8.6
+- id: assembly_west_sw
+  label: Line D · Material intake
+  x: -40.0
+  y: -5.0
+- id: quality_control_sw
+  label: Line D · Rack picking
+  x: -24.0
+  y: -5.0
+- id: maintenance_sw
+  label: Line D · Component kit release
+  x: -8.0
+  y: -5.0
+- id: assembly_west_nw
+  label: Line D · Cab Structure
+  x: -36.0
+  y: 22.5
+- id: quality_control_nw
+  label: Line D · Electrical Harness
+  x: -23.0
+  y: 22.5
+- id: maintenance_nw
+  label: Line D · Operator Controls
+  x: -10.0
+  y: 22.5
+- id: assembly_west_ne
+  label: Line D · Haul-truck chassis integration
+  x: 8.0
+  y: 22.9
+- id: quality_control_ne
+  label: Line D · Diesel and gearbox installation
+  x: 24.0
+  y: 22.9
+- id: maintenance_ne
+  label: Line D · Operator cab installation
+  x: 40.0
+  y: 22.9
+- id: assembly_west_se
+  label: Line D · Dump bed and hydraulic lift
+  x: 8.0
+  y: -3.6
+- id: quality_control_se
+  label: Line D · Load and safety testing
+  x: 24.0
+  y: -3.6
+- id: maintenance_se
+  label: Line D · Finished haul truck dispatch
+  x: 40.0
+  y: -3.6
+production_flows:
+- - receiving_sw
+  - warehouse_bay_sw
+  - process_north_sw
+  - receiving_nw
+  - warehouse_bay_nw
+  - process_north_nw
+  - receiving_ne
+  - warehouse_bay_ne
+  - process_north_ne
+  - receiving_se
+  - warehouse_bay_se
+  - process_north_se
+- - process_south_sw
+  - fabrication_north_sw
+  - fabrication_south_sw
+  - process_south_nw
+  - fabrication_north_nw
+  - fabrication_south_nw
+  - process_south_ne
+  - fabrication_north_ne
+  - fabrication_south_ne
+  - process_south_se
+  - fabrication_north_se
+  - fabrication_south_se
+- - shipping_sw
+  - packing_sw
+  - parts_sorting_sw
+  - shipping_nw
+  - packing_nw
+  - parts_sorting_nw
+  - shipping_ne
+  - packing_ne
+  - parts_sorting_ne
+  - shipping_se
+  - packing_se
+  - parts_sorting_se
+- - assembly_west_sw
+  - quality_control_sw
+  - maintenance_sw
+  - assembly_west_nw
+  - quality_control_nw
+  - maintenance_nw
+  - assembly_west_ne
+  - quality_control_ne
+  - maintenance_ne
+  - assembly_west_se
+  - quality_control_se
+  - maintenance_se

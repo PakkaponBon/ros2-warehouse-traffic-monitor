@@ -1,5 +1,7 @@
 """Primitive SDF geometry for the warehouse layout generator."""
 
+import math
+
 RACK_COLOR = "0.12 0.24 0.42 1"
 
 
@@ -38,39 +40,43 @@ def box_model(name, x, y, size_x, size_y, height, color):
 
 
 def rack_model(name, x, y, length, depth, height):
-    """Create an industrial rack with beams, decks, loads, and one footprint."""
+    """Build a repeated-bay pallet rack inside one collision footprint."""
     visuals = []
-    for index, upright_x in enumerate((-length / 2.0, -length / 6.0, length / 6.0, length / 2.0)):
+    bay_count = max(2, math.ceil(length / 2.4))
+    bay_width = length / bay_count
+    for index in range(bay_count + 1):
+        upright_x = -length / 2.0 + index * bay_width
         for side, upright_y in enumerate((-depth / 2.0, depth / 2.0)):
-            visuals.append(
-                f"""
+            visuals.append(f"""
         <visual name="upright_{index}_{side}">
           <pose>{upright_x} {upright_y} {height / 2.0} 0 0 0</pose>
-          <geometry><box><size>0.12 0.12 {height}</size></box></geometry>
+          <geometry><box><size>0.10 0.10 {height}</size></box></geometry>
 {material(RACK_COLOR)}
-        </visual>"""
-            )
-    for level, z in enumerate((0.65, 1.65, 2.65, 3.5)):
-        visuals.append(
-            f"""
-        <visual name="beam_{level}">
+        </visual>""")
+    for level, z in enumerate((0.65, 1.65, 2.65)):
+        visuals.append(f"""
+        <visual name="deck_{level}">
           <pose>0 0 {z} 0 0 0</pose>
-          <geometry><box><size>{length} {depth} 0.12</size></box></geometry>
+          <geometry><box><size>{length} {depth} 0.06</size></box></geometry>
+{material("0.48 0.51 0.55 1")}
+        </visual>""")
+        for side, beam_y in enumerate((-depth / 2.0, depth / 2.0)):
+            visuals.append(f"""
+        <visual name="beam_{level}_{side}">
+          <pose>0 {beam_y} {z + 0.06} 0 0 0</pose>
+          <geometry><box><size>{length} 0.10 0.12</size></box></geometry>
 {material(RACK_BEAM_COLOR)}
-        </visual>"""
-        )
-    for load_index, load_x in enumerate(
-        (-length * 0.38, -length * 0.18, length * 0.03, length * 0.25, length * 0.41)
-    ):
-        level = load_index % 3
-        visuals.append(
-            f"""
-        <visual name="load_{load_index}">
-          <pose>{load_x} 0 {0.92 + level} 0 0 0</pose>
-          <geometry><box><size>1.25 {depth * 0.78} 0.48</size></box></geometry>
-{material(BOX_COLOR)}
-        </visual>"""
-        )
+        </visual>""")
+    load_width = min(1.25, bay_width * 0.82)
+    for bay in range(bay_count):
+        load_x = -length / 2.0 + (bay + 0.5) * bay_width
+        for level in range(2):
+            visuals.append(f"""
+        <visual name="load_{bay}_{level}">
+          <pose>{load_x} 0 {0.95 + level} 0 0 0</pose>
+          <geometry><box><size>{load_width} {depth * 0.72} 0.48</size></box></geometry>
+{material(BOX_COLOR if (bay + level) % 2 else "0.72 0.54 0.31 1")}
+        </visual>""")
     return f"""
     <model name="{name}">
       <static>true</static>

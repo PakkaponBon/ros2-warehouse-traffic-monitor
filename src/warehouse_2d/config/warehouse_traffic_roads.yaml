@@ -1,0 +1,131 @@
+# Road-only traffic demo for a partial SLAM map. Does not change the 48-dock delivery configuration.
+loading_seconds: 2.0
+unloading_seconds: 2.0
+repeat_jobs: true
+spawns:
+- x: -25.0
+  y: 0.0
+  yaw: 0.0
+- x: 25.0
+  y: 0.0
+  yaw: 3.141592653589793
+- x: -25.0
+  y: 24.0
+  yaw: 0.0
+- x: 25.0
+  y: -24.8
+  yaw: 3.141592653589793
+- x: -35.0
+  y: 0.0
+  yaw: 0.0
+- x: 35.0
+  y: 0.0
+  yaw: 3.141592653589793
+- x: -35.0
+  y: 24.0
+  yaw: 0.0
+- x: 35.0
+  y: -24.8
+  yaw: 3.141592653589793
+stations:
+- id: west_road_start
+  label: West road · Start
+  x: -40.0
+  y: 0.0
+- id: west_road_middle
+  label: West road · Midpoint
+  x: -25.0
+  y: 0.0
+- id: west_road_end
+  label: West road · End
+  x: -10.0
+  y: 0.0
+- id: east_road_start
+  label: East road · Start
+  x: 10.0
+  y: 0.0
+- id: east_road_middle
+  label: East road · Midpoint
+  x: 25.0
+  y: 0.0
+- id: east_road_end
+  label: East road · End
+  x: 40.0
+  y: 0.0
+- id: north_road_start
+  label: North road · Start
+  x: -40.0
+  y: 24.0
+- id: north_road_middle
+  label: North road · Midpoint
+  x: -25.0
+  y: 24.0
+- id: north_road_end
+  label: North road · End
+  x: -10.0
+  y: 24.0
+- id: south_road_start
+  label: South road · Start
+  x: 10.0
+  y: -24.8
+- id: south_road_middle
+  label: South road · Midpoint
+  x: 25.0
+  y: -24.8
+- id: south_road_end
+  label: South road · End
+  x: 40.0
+  y: -24.8
+- id: west_road_queue
+  label: West road · Queue
+  x: -32.0
+  y: 0.0
+- id: west_road_transfer
+  label: West road · Transfer
+  x: -17.0
+  y: 0.0
+- id: east_road_queue
+  label: East road · Queue
+  x: 32.0
+  y: 0.0
+- id: east_road_transfer
+  label: East road · Transfer
+  x: 17.0
+  y: 0.0
+- id: north_road_queue
+  label: North road · Queue
+  x: -32.0
+  y: 24.0
+- id: north_road_transfer
+  label: North road · Transfer
+  x: -17.0
+  y: 24.0
+- id: south_road_queue
+  label: South road · Queue
+  x: 32.0
+  y: -24.8
+- id: south_road_transfer
+  label: South road · Transfer
+  x: 17.0
+  y: -24.8
+production_flows:
+- - west_road_start
+  - west_road_middle
+  - west_road_end
+- - east_road_start
+  - east_road_middle
+  - east_road_end
+- - north_road_start
+  - north_road_middle
+  - north_road_end
+- - south_road_start
+  - south_road_middle
+  - south_road_end
+- - west_road_queue
+  - west_road_transfer
+- - east_road_queue
+  - east_road_transfer
+- - north_road_queue
+  - north_road_transfer
+- - south_road_queue
+  - south_road_transfer

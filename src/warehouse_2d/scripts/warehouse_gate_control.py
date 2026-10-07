@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slide one CRTT demo gate open or closed through Gazebo state services."""
+"""Slide one Warehouse demo gate open or closed through Gazebo state services."""
 
 import argparse
 from copy import deepcopy
@@ -11,25 +11,11 @@ from geometry_msgs.msg import Twist
 import rclpy
 
 
-# World coordinates match SLIDING_GATES in generate_crtt_layout_demo.py.
-# Only x/y are scaled; the panels retain their original height.
-LAYOUT_SCALE = 0.30
+# World coordinates match SLIDING_GATES in generate_warehouse_layout_demo.py.
 GATES = {
-    "north": (
-        "crtt_north_gate",
-        (0.0, 44.0 * LAYOUT_SCALE, 1.25),
-        (-11.5 * LAYOUT_SCALE, 44.0 * LAYOUT_SCALE, 1.25),
-    ),
-    "east": (
-        "crtt_east_gate",
-        (77.0 * LAYOUT_SCALE, 0.0, 1.25),
-        (77.0 * LAYOUT_SCALE, 13.5 * LAYOUT_SCALE, 1.25),
-    ),
-    "south": (
-        "crtt_south_gate",
-        (-39.0 * LAYOUT_SCALE, -44.0 * LAYOUT_SCALE, 1.25),
-        (-25.5 * LAYOUT_SCALE, -44.0 * LAYOUT_SCALE, 1.25),
-    ),
+    "north": ("warehouse_north_gate", (0.0, 27.5, 1.25), (-3.3, 27.5, 1.25)),
+    "east": ("warehouse_east_gate", (47.9, 0.0, 1.25), (47.9, 4.0, 1.25)),
+    "south": ("warehouse_south_gate", (-24.0, -27.5, 1.25), (-20.0, -27.5, 1.25)),
 }
 
 
@@ -54,7 +40,7 @@ def move_gate(node, gate, action, duration, timeout):
     get_request.reference_frame = "world"
     current = call_service(node, get_client, get_request, timeout)
     if not current.success:
-        raise RuntimeError(f"Gate model {name} was not found; relaunch the CRTT demo")
+        raise RuntimeError(f"Gate model {name} was not found; relaunch the Warehouse demo")
 
     start = current.state.pose.position
     origin = (start.x, start.y, start.z)
@@ -97,7 +83,7 @@ def main(argv=None):
         parser.error("duration must be nonnegative and timeout must be positive")
 
     rclpy.init(args=[])
-    node = rclpy.create_node("crtt_gate_control")
+    node = rclpy.create_node("warehouse_gate_control")
     try:
         move_gate(node, options.gate, options.action,
                   options.duration, options.timeout)

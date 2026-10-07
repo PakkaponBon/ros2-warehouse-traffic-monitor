@@ -5,6 +5,7 @@ import {
   getHealth,
   getMap,
   getRouteSuggestion,
+  getSelectedTrack,
   getSideTasks,
   getState,
   setSideTask,
@@ -34,6 +35,19 @@ test('getState rejects an invalid API payload', async () => {
   await assert.rejects(getState({ hours: 1 }), /Traffic history unavailable/);
 });
 
+
+test('getSelectedTrack requests one vehicle and validates the response', async () => {
+  let requested;
+  globalThis.fetch = async (path) => {
+    requested = path;
+    return new Response(JSON.stringify({ vehicle_id: 'vehicle_2', points: [[1, 2, 10, 0.3]] }));
+  };
+  const track = await getSelectedTrack('vehicle_2', '2026-10-02T00:00:00Z', '2026-10-02T00:05:00Z');
+  assert.equal(track.points.length, 1);
+  assert.equal(new URL(requested, 'http://localhost').searchParams.get('vehicle_id'), 'vehicle_2');
+  globalThis.fetch = async () => new Response(JSON.stringify({ vehicle_id: 'vehicle_1', points: [] }));
+  await assert.rejects(getSelectedTrack('vehicle_2', '0', '1'), /route unavailable/);
+});
 
 test('getHealth accepts measured service and vehicle health', async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({

@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 import yaml
 
@@ -100,6 +102,14 @@ class MonitorHandler(BaseHTTPRequestHandler):
                 self._send(200, "application/json", json.dumps(payload).encode())
             except Exception as error:  # Keep the browser connection JSON-safe on unexpected data errors.
                 self._send(400, "application/json", json.dumps({"error": str(error)}).encode())
+        elif parsed.path == "/api/track":
+            try:
+                payload = self.monitor.selected_track(parse_qs(parsed.query))
+                self._send(200, "application/json", json.dumps(payload).encode())
+            except ValueError as error:
+                self._send(400, "application/json", json.dumps({"error": str(error)}).encode())
+            except Exception as error:
+                self._send(500, "application/json", json.dumps({"error": str(error)}).encode())
         elif parsed.path == "/api/bounds":
             try:
                 self._send(
@@ -224,6 +234,7 @@ class WebMonitor(Node):
         self.lock = threading.Lock()
         self.validation_status = {}
         self.initialization_status = {}
+        self.scan_received = {}
         self.simulation_faults_enabled = bool(
             self.get_parameter("enable_simulation_faults").value
         )
@@ -264,6 +275,14 @@ class WebMonitor(Node):
                 )
             )
             if vehicle_name != "my_robot":
+                self.validation_subscriptions.append(
+                    self.create_subscription(
+                        LaserScan,
+                        f"/traffic/{vehicle_name}/scan",
+                        lambda message, name=vehicle_name: self._on_scan(name, message),
+                        qos_profile_sensor_data,
+                    )
+                )
                 self.validation_subscriptions.append(
                     self.create_subscription(
                         String,
@@ -423,8 +442,13 @@ class WebMonitor(Node):
         with self.lock:
             self.validation_status[vehicle_name] = payload
 
+    def _on_scan(self, vehicle_name, _message):
+        """Record receipt of a LaserScan message, independent of localization."""
+        with self.lock:
+            self.scan_received[vehicle_name] = time.time()
+
     def _on_initialization(self, vehicle_name, message):
-        """Cache live one-shot UWB/AMCL startup progress for diagnostics."""
+        """Cache live localization startup and relocation recovery progress."""
         try:
             payload = json.loads(message.data)
         except (TypeError, ValueError):
@@ -666,7 +690,8 @@ class WebMonitor(Node):
             vehicles = [
                 {key: value for key, value in payload.items() if key != "received_at"}
                 for payload in self.initialization_status.values()
-                if now - payload.get("received_at", 0.0) <= 5.0
+                if now - payload.get("received_at", 0.0) <= (
+                    2.0 if payload.get("reference_source") == "gazebo_ground_truth" else 5.0)
             ]
         vehicles.sort(key=lambda value: value.get("vehicle_id", ""))
         return {
@@ -758,6 +783,7 @@ class WebMonitor(Node):
                 "first_started": max(start, cell["first_started"]),
                 "last_ended": min(end, cell["last_ended"]),
                 "vehicle_id": max(cell["vehicle_events"], key=cell["vehicle_events"].get),
+                "vehicle_ids": sorted(cell["vehicles"]),
             }
             if congestion:
                 hotspot["max_vehicles"] = cell["max_vehicles"]
@@ -765,24 +791,25 @@ class WebMonitor(Node):
         return sorted(hotspots, key=lambda item: item["events"], reverse=True)
 
     @staticmethod
-    def _stuck_timeline(rows, start, end, resolution, maximum_buckets=120):
-        """Find the busiest stuck location in each readable time bucket."""
+    def _stuck_timeline(
+        rows, start, end, resolution, maximum_buckets=120, congestion_rows=()
+    ):
+        """Summarize confirmed stuck and congestion events by time and place."""
         duration = max(1.0, end - start)
         bucket_options = (60, 300, 900, 3600, 21600, 86400)
         bucket_seconds = next(
-            (
-                size
-                for size in bucket_options
-                if math.ceil(duration / size) <= maximum_buckets
-            ),
-            bucket_options[-1],
+            (size for size in bucket_options
+             if math.ceil(duration / size) <= maximum_buckets),
+            math.ceil(duration / maximum_buckets / bucket_options[-1])
+            * bucket_options[-1],
         )
         buckets = {}
-        for vehicle_id, x, y, started_at, ended_at in rows:
+
+        def add_event(vehicle_ids, x, y, started_at, ended_at, issue_type):
             event_start = max(start, float(started_at))
             event_end = min(end, float(ended_at))
             if event_end < event_start:
-                continue
+                return
             first_bucket = math.floor(event_start / bucket_seconds) * bucket_seconds
             last_bucket = math.floor(
                 max(event_start, event_end - 1.0e-6) / bucket_seconds
@@ -795,24 +822,36 @@ class WebMonitor(Node):
                 )
                 bucket = buckets.setdefault(
                     bucket_start,
-                    {"vehicles": set(), "events": 0, "cells": {}},
+                    {"vehicles": set(), "events": 0, "stuck_events": 0,
+                     "congestion_events": 0, "cells": {}},
                 )
-                bucket["vehicles"].add(vehicle_id)
+                bucket["vehicles"].update(vehicle_ids)
                 bucket["events"] += 1
+                bucket[f"{issue_type}_events"] += 1
                 cell = bucket["cells"].setdefault(
                     cell_key,
-                    {
-                        "x_sum": 0.0,
-                        "y_sum": 0.0,
-                        "events": 0,
-                        "vehicles": set(),
-                    },
+                    {"x_sum": 0.0, "y_sum": 0.0, "events": 0,
+                     "vehicles": set(), "stuck_events": 0,
+                     "congestion_events": 0, "last_event_at": None},
+                )
+                cell["last_event_at"] = max(
+                    cell["last_event_at"] or event_start,
+                    min(event_end, bucket_start + bucket_seconds),
                 )
                 cell["x_sum"] += float(x)
                 cell["y_sum"] += float(y)
                 cell["events"] += 1
-                cell["vehicles"].add(vehicle_id)
+                cell["vehicles"].update(vehicle_ids)
+                cell[f"{issue_type}_events"] += 1
                 bucket_start += bucket_seconds
+
+        for vehicle_id, x, y, started_at, ended_at in rows:
+            add_event([vehicle_id], x, y, started_at, ended_at, "stuck")
+        for group_key, x, y, _count, started_at, ended_at in congestion_rows:
+            add_event(
+                [name for name in group_key.split(",") if name],
+                x, y, started_at, ended_at, "congestion"
+            )
 
         timeline = []
         for bucket_start, bucket in sorted(buckets.items()):
@@ -820,22 +859,58 @@ class WebMonitor(Node):
                 bucket["cells"].values(),
                 key=lambda cell: (len(cell["vehicles"]), cell["events"]),
             )
-            timeline.append(
-                {
-                    "start": max(start, bucket_start),
-                    "end": min(end, bucket_start + bucket_seconds),
-                    "total_vehicles": len(bucket["vehicles"]),
-                    "total_events": bucket["events"],
-                    "hotspot": {
-                        "x": hotspot["x_sum"] / hotspot["events"],
-                        "y": hotspot["y_sum"] / hotspot["events"],
-                        "vehicles": len(hotspot["vehicles"]),
-                        "events": hotspot["events"],
-                        "vehicle_ids": sorted(hotspot["vehicles"]),
-                    },
-                }
-            )
+            timeline.append({
+                "start": max(start, bucket_start),
+                "end": min(end, bucket_start + bucket_seconds),
+                "total_vehicles": len(bucket["vehicles"]),
+                "vehicle_ids": sorted(bucket["vehicles"]),
+                "total_events": bucket["events"],
+                "stuck_events": bucket["stuck_events"],
+                "congestion_events": bucket["congestion_events"],
+                "hotspot": {
+                    "x": hotspot["x_sum"] / hotspot["events"],
+                    "y": hotspot["y_sum"] / hotspot["events"],
+                    "vehicles": len(hotspot["vehicles"]),
+                    "events": hotspot["events"],
+                    "last_event_at": hotspot["last_event_at"],
+                    "stuck_events": hotspot["stuck_events"],
+                    "congestion_events": hotspot["congestion_events"],
+                    "vehicle_ids": sorted(hotspot["vehicles"]),
+                },
+            })
         return {"bucket_seconds": bucket_seconds, "buckets": timeline}
+
+    @staticmethod
+    def _traffic_timeline(density_rows, issue_timeline, start, end):
+        """Count distinct delayed vehicles and active confirmed issues per period."""
+        bucket_seconds = issue_timeline["bucket_seconds"]
+        slow_vehicles = {}
+        for row in density_rows:
+            if row[8]:
+                slow_vehicles.setdefault(int(row[2]), set()).update(
+                    vehicle_id for vehicle_id in row[8].split(",") if vehicle_id
+                )
+        issues = {
+            math.floor(bucket["start"] / bucket_seconds): bucket
+            for bucket in issue_timeline["buckets"]
+        }
+        first = math.floor(start / bucket_seconds)
+        last = math.floor(math.nextafter(end, -math.inf) / bucket_seconds)
+        buckets = []
+        for index in range(first, last + 1):
+            issue = issues.get(index, {})
+            delayed = sorted(slow_vehicles.get(index, ()))
+            buckets.append({
+                "start": max(start, index * bucket_seconds),
+                "end": min(end, (index + 1) * bucket_seconds),
+                "slow_vehicles": len(delayed),
+                "slow_vehicle_ids": delayed,
+                "stuck_events": issue.get("stuck_events", 0),
+                "congestion_events": issue.get("congestion_events", 0),
+                "issue_vehicle_ids": issue.get("vehicle_ids", []),
+                "hotspot": issue.get("hotspot"),
+            })
+        return {"bucket_seconds": bucket_seconds, "buckets": buckets}
 
     @staticmethod
     def _heat_bucket_seconds(start, end, maximum_buckets=24):
@@ -848,14 +923,15 @@ class WebMonitor(Node):
                 for size in options
                 if math.ceil(duration / size) <= maximum_buckets
             ),
-            options[-1],
+            math.ceil(duration / maximum_buckets / options[-1])
+            * options[-1],
         )
 
     @staticmethod
     def _density_time_details(
-        rows, stuck_rows, start, end, resolution, bucket_seconds
+        rows, stuck_rows, congestion_rows, start, end, resolution, bucket_seconds
     ):
-        """Keep metric-specific peak times and stuck history for each heat cell."""
+        """Keep peak times and confirmed issue vehicles for each heat cell."""
         cells = {}
         for row in rows:
             cell_key = (int(row[0]), int(row[1]))
@@ -901,6 +977,12 @@ class WebMonitor(Node):
                         "events": 0,
                         "vehicles": set(),
                         "buckets": {},
+                        "latest": None,
+                    },
+                    "congestion": {
+                        "events": 0,
+                        "vehicles": set(),
+                        "latest": None,
                     },
                 },
             )
@@ -929,6 +1011,12 @@ class WebMonitor(Node):
             stuck = cells[cell_key]["stuck"]
             stuck["events"] += 1
             stuck["vehicles"].add(vehicle_id)
+            if stuck["latest"] is None or event_start >= stuck["latest"]["start"]:
+                stuck["latest"] = {
+                    "start": event_start,
+                    "end": event_end,
+                    "vehicle_ids": [vehicle_id],
+                }
             first_bucket = math.floor(event_start / bucket_seconds) * bucket_seconds
             last_bucket = math.floor(
                 max(event_start, event_end - 1.0e-6) / bucket_seconds
@@ -966,6 +1054,57 @@ class WebMonitor(Node):
                 "vehicles": len(stuck["vehicles"]),
                 "vehicle_ids": sorted(stuck["vehicles"]),
                 "peak": peak,
+                "latest": stuck["latest"],
+            }
+        for group_key, x, y, _vehicle_count, started_at, ended_at in congestion_rows:
+            cell_key = (
+                math.floor(float(x) / resolution),
+                math.floor(float(y) / resolution),
+            )
+            if cell_key not in cells:
+                # A group centroid can lie between two occupied heat cells.
+                # Attribute it to the nearest observed cell only when that
+                # cell is within the configured 2 m congestion radius.
+                nearby = []
+                for ix in range(
+                    math.floor((float(x) - 2.0) / resolution),
+                    math.floor((float(x) + 2.0) / resolution) + 1,
+                ):
+                    for iy in range(
+                        math.floor((float(y) - 2.0) / resolution),
+                        math.floor((float(y) + 2.0) / resolution) + 1,
+                    ):
+                        key = (ix, iy)
+                        if key in cells:
+                            nearby.append((math.hypot(
+                                (ix + 0.5) * resolution - float(x),
+                                (iy + 0.5) * resolution - float(y),
+                            ), key))
+                if not nearby:
+                    continue
+                distance, cell_key = min(nearby)
+                if distance > 2.0:
+                    continue
+            event_start = max(start, float(started_at))
+            event_end = min(end, float(ended_at))
+            if event_end < event_start:
+                continue
+            vehicle_ids = sorted({name for name in group_key.split(",") if name})
+            issue = cells[cell_key]["congestion"]
+            issue["events"] += 1
+            issue["vehicles"].update(vehicle_ids)
+            if issue["latest"] is None or event_start >= issue["latest"]["start"]:
+                issue["latest"] = {
+                    "start": event_start,
+                    "end": event_end,
+                    "vehicle_ids": vehicle_ids,
+                }
+        for cell in cells.values():
+            issue = cell["congestion"]
+            cell["congestion"] = {
+                "events": issue["events"],
+                "vehicle_ids": sorted(issue["vehicles"]),
+                "latest": issue["latest"],
             }
         return cells
 
@@ -1265,6 +1404,68 @@ class WebMonitor(Node):
             ],
         }
 
+    def selected_track(self, query):
+        """Return one recorded route with timing and position-quality evidence."""
+        vehicle_id = query.get("vehicle_id", [""])[0]
+        if vehicle_id not in ("my_robot", *self.simulation_vehicle_names):
+            raise ValueError("unknown vehicle_id")
+        end = parse_time(query.get("end", [""])[0], time.time())
+        start = parse_time(query.get("start", [""])[0], end - 300.0)
+        if not math.isfinite(start) or not math.isfinite(end) or not 0 < end - start <= 3600:
+            raise ValueError("selected route window must be between 0 and 60 minutes")
+        with self.lock:
+            rows = self.connection.execute(
+                """SELECT x, y, observed_at, speed, source, frame_id
+                   FROM samples
+                   WHERE vehicle_id = ? AND observed_at BETWEEN ? AND ?
+                   ORDER BY observed_at, id""",
+                (vehicle_id, start, end),
+            ).fetchall()
+            # Gazebo truth is a simulation-only reference. A real vehicle will
+            # have no such metric unless an independent reference is provided.
+            error_rows = self.connection.execute(
+                """SELECT position_error FROM localization_metrics
+                   WHERE vehicle_id = ? AND observed_at BETWEEN ? AND ?
+                   ORDER BY position_error""",
+                (vehicle_id, start, end),
+            ).fetchall()
+        points = [[float(x), float(y), float(observed_at), float(speed)]
+                  for x, y, observed_at, speed, _source, _frame in rows]
+        largest_gap = 0.0
+        breaks = 0
+        for previous, current in zip(points, points[1:]):
+            elapsed = current[2] - previous[2]
+            largest_gap = max(largest_gap, elapsed)
+            distance = math.hypot(current[0] - previous[0], current[1] - previous[1])
+            # Keep this in step with the browser's path segmentation rule.
+            if elapsed <= 0 or elapsed > 12 or distance > max(2.5, elapsed * 2.2 + 0.75):
+                breaks += 1
+        errors = [float(row[0]) for row in error_rows]
+        reference = None
+        if errors:
+            reference = {
+                "source": "gazebo_ground_truth",
+                "samples": len(errors),
+                "p95_error_m": errors[math.ceil(len(errors) * 0.95) - 1],
+                "max_error_m": errors[-1],
+            }
+        return {
+            "vehicle_id": vehicle_id,
+            "start": iso_time(start),
+            "end": iso_time(end),
+            "points": points,
+            "quality": {
+                "time_basis": "recorder_wall_clock",
+                "first_recorded_at": iso_time(points[0][2]) if points else None,
+                "last_recorded_at": iso_time(points[-1][2]) if points else None,
+                "max_gap_s": largest_gap,
+                "path_breaks": breaks,
+                "frames": sorted({row[5] for row in rows}),
+                "sources": sorted({row[4] for row in rows}),
+                "simulation_reference": reference,
+            },
+        }
+
     def query(self, query):
         now = time.time()
         end = parse_time(query.get("end", [""])[0], now)
@@ -1425,11 +1626,19 @@ class WebMonitor(Node):
             congestion, start, end, event_resolution, congestion=True
         )
         stuck_timeline = self._stuck_timeline(
-            stuck, start, end, event_resolution
+            stuck, start, end, event_resolution, congestion_rows=congestion
+        )
+        chart_issues = self._stuck_timeline(
+            stuck, start, end, event_resolution,
+            maximum_buckets=24, congestion_rows=congestion
+        )
+        traffic_timeline = self._traffic_timeline(
+            density_time_rows, chart_issues, start, end
         )
         density_time_details = self._density_time_details(
             density_time_rows,
             stuck,
+            congestion,
             start,
             end,
             resolution,
@@ -1473,6 +1682,12 @@ class WebMonitor(Node):
                                 "vehicles": 0,
                                 "vehicle_ids": [],
                                 "peak": None,
+                                "latest": None,
+                            },
+                            "congestion": {
+                                "events": 0,
+                                "vehicle_ids": [],
+                                "latest": None,
                             },
                         },
                     ),
@@ -1486,7 +1701,7 @@ class WebMonitor(Node):
                     "y": row[2],
                     "speed": row[3],
                     "observed_at": row[4],
-                    "motion_state": row[5],
+                    "motion_state": "moving" if row[5] == "turning" else row[5],
                     "commanded_speed": row[6],
                     "intent_active": bool(row[7]),
                 }
@@ -1495,6 +1710,7 @@ class WebMonitor(Node):
             "tracks": tracks,
             "stuck": stuck_hotspots,
             "stuck_timeline": stuck_timeline,
+            "traffic_timeline": traffic_timeline,
             "congestion": congestion_hotspots,
             "analytics": {
                 "most_stuck_location": stuck_hotspots[0] if stuck_hotspots else None,
@@ -1548,9 +1764,8 @@ class WebMonitor(Node):
         Return measured service and vehicle freshness for the health page.
 
         A recent position proves that telemetry reached the recorder; it does
-        not prove that every physical sensor is healthy. LiDAR therefore stays
-        ``unknown`` until a dedicated sensor heartbeat exists, unless the
-        vehicle explicitly reports ``sensor_wait``.
+        not prove that every physical sensor is healthy. LiDAR is checked
+        separately from observed LaserScan message arrival.
         """
         now = time.time() if now is None else float(now)
         online_after = max(
@@ -1593,6 +1808,7 @@ class WebMonitor(Node):
                      SELECT MAX(id) FROM localization_metrics GROUP BY vehicle_id
                    )"""
             ).fetchall()
+            scan_received = dict(self.scan_received)
             validation_rows = self.connection.execute(
                 """SELECT vehicle_id, observed_at, state, error_m,
                           visible_tag_count, uwb_reason
@@ -1634,6 +1850,11 @@ class WebMonitor(Node):
             item["vehicle_id"]: set(item["faults"])
             for item in fault_snapshot["active"]
         }
+        gazebo_recovery = {
+            payload["vehicle_id"]: payload
+            for payload in self._initialization_snapshot()["vehicles"]
+            if payload.get("reference_source") == "gazebo_ground_truth"
+        }
 
         latest_by_vehicle = {row[0]: row for row in sample_rows}
         expected_ids = {
@@ -1657,6 +1878,7 @@ class WebMonitor(Node):
             source = None if row is None else row[5]
             motion_state = "unknown" if row is None else row[7]
             localization_metric = localization.get(vehicle_id)
+            recovery = gazebo_recovery.get(vehicle_id)
             uwb = validation.get(vehicle_id)
             if uwb is not None:
                 uwb_freshness, uwb_age = freshness(uwb["observed_at"])
@@ -1676,27 +1898,39 @@ class WebMonitor(Node):
                     "reason": "injected_dropout",
                 }
 
+            scan_state, scan_age = freshness(scan_received.get(vehicle_id))
             if "lidar_dropout" in injected_faults:
                 lidar = {
                     "state": "unavailable",
                     "detail": "Simulation fault: LiDAR data dropped",
                 }
+            elif scan_state != "unknown":
+                lidar = {
+                    "state": scan_state,
+                    "detail": "LaserScan messages received" if scan_state == "online"
+                    else "LaserScan updates delayed or stopped",
+                }
             elif motion_state == "sensor_wait":
                 lidar = {
                     "state": "unavailable",
-                    "detail": "Vehicle reports that it is waiting for LiDAR",
+                    "detail": "Vehicle reports that it is waiting for LiDAR; no scan observed",
                 }
             else:
                 lidar = {
                     "state": "unknown",
-                    "detail": "Dedicated LiDAR heartbeat is not configured",
+                    "detail": "No LaserScan received yet",
                 }
+            lidar["age_seconds"] = scan_age
 
             if injected_faults.intersection({"lidar_dropout", "localization_loss"}):
                 localization_state = "unavailable"
+            elif recovery is not None and recovery.get("drive_allowed") is not True:
+                localization_state = "unavailable"
+            elif motion_state == "localizing":
+                localization_state = "unavailable"
             elif source and str(source).startswith("amcl"):
                 localization_state = status
-            elif motion_state in {"localizing", "sensor_wait"}:
+            elif motion_state == "sensor_wait":
                 localization_state = "unavailable"
             else:
                 localization_state = "unknown"
@@ -1713,7 +1947,7 @@ class WebMonitor(Node):
                         "frame_id": row[6],
                     },
                     "speed": None if row is None else float(row[4]),
-                    "motion_state": motion_state,
+                    "motion_state": "moving" if motion_state == "turning" else motion_state,
                     "injected_faults": sorted(injected_faults),
                     "localization": {
                         "state": localization_state,
@@ -1724,11 +1958,12 @@ class WebMonitor(Node):
                             else localization_metric["covariance_trace"]
                         ),
                         "position_error_m": (
-                            None
-                            if localization_metric is None
-                            else localization_metric["position_error_m"]
+                            recovery.get("position_error_m") if recovery is not None
+                            else (None if localization_metric is None
+                                  else localization_metric["position_error_m"])
                         ),
                     },
+                    "gazebo_validation": recovery,
                     "uwb": uwb or {
                         "state": "unknown",
                         "freshness": "unknown",

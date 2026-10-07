@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive one CRTT mapping vehicle through surveyed demo-world corridors.
+"""Drive one Warehouse mapping vehicle through open demo-world corridors.
 
 Gazebo model states guide only the scripted demo route. slam_toolbox still
 builds its map from the vehicle's odometry and 2-D LaserScan, not ground truth.
@@ -16,23 +16,15 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 
 
-# Begin at (0, 38) in one north-road lane, away from its centre line. The two
-# east-west passes expose the station rows and the perimeter exposes the bays.
-# Keep this scale in sync with generate_crtt_layout_demo.py.
-LAYOUT_SCALE = 0.30
-ROUTE = tuple(
-    (x * LAYOUT_SCALE, y * LAYOUT_SCALE)
-    for x, y in (
-        (70.0, 38.0),
-        (70.0, 5.0),
-        (-70.0, 5.0),
-        (-70.0, -34.5),
-        (70.0, -34.5),
-        (70.0, -2.5),
-        (-70.0, -2.5),
-        (-70.0, 38.0),
-        (0.0, 38.0),
-    )
+# Collision-clear sweeps through the original-width roads and four compact halls.
+# The robot records LaserScan/odometry with SLAM; these are navigation waypoints,
+# not a precomputed occupancy map.
+ROUTE = (
+    (-42.0, 24.0), (0.0, 24.0), (42.0, 24.0), (0.0, 24.0),
+    (0.0, 3.4), (-42.0, 3.4), (0.0, 3.4), (42.0, 3.4), (0.0, 3.4),
+    (0.0, -3.4), (-42.0, -3.4), (0.0, -3.4), (42.0, -3.4), (0.0, -3.4),
+    (0.0, -24.0), (-42.0, -24.0), (0.0, -24.0), (42.0, -24.0),
+    (0.0, -24.0), (0.0, 24.0),
 )
 
 
@@ -40,9 +32,9 @@ def normalized_angle(angle):
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
 
 
-class CrttMappingDriver(Node):
+class WarehouseMappingDriver(Node):
     def __init__(self):
-        super().__init__("crtt_mapping_driver")
+        super().__init__("warehouse_mapping_driver")
         self.declare_parameter("max_speed", 0.9)
         self.declare_parameter("loop", False)
         self.max_speed = float(self.get_parameter("max_speed").value)
@@ -70,7 +62,7 @@ class CrttMappingDriver(Node):
         )
         self.create_timer(0.1, self.step)
         self.get_logger().info(
-            f"CRTT automatic mapping: {len(ROUTE)} waypoints, "
+            f"Warehouse automatic mapping: {len(ROUTE)} waypoints, "
             f"speed <= {self.max_speed:.2f} m/s"
         )
 
@@ -132,7 +124,7 @@ class CrttMappingDriver(Node):
                     self.finished = True
                     self.stop()
                     self.get_logger().info(
-                        "CRTT mapping route complete; save /map with map_saver_cli"
+                        "Warehouse mapping route complete; save /map with map_saver_cli"
                     )
                     return
                 self.target_index = 0
@@ -158,7 +150,7 @@ class CrttMappingDriver(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = CrttMappingDriver()
+    node = WarehouseMappingDriver()
     try:
         rclpy.spin(node)
     finally:

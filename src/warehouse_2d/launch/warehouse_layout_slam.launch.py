@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Map the CRTT demo with one automatically driven 2-D LiDAR vehicle."""
+"""Map the Warehouse demo with one automatically driven 2-D LiDAR vehicle."""
 
 from pathlib import Path
 
@@ -44,7 +44,7 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "slam_params",
                 default_value=str(
-                    package_share / "config" / "crtt_slam_diagnostic.yaml"
+                    package_share / "config" / "warehouse_slam_diagnostic.yaml"
                 ),
             ),
             SetEnvironmentVariable(
@@ -57,7 +57,7 @@ def generate_launch_description():
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
-                    str(package_share / "launch" / "crtt_layout_demo.launch.py")
+                    str(package_share / "launch" / "warehouse_layout_demo.launch.py")
                 ),
                 launch_arguments={"gui": gui}.items(),
             ),
@@ -79,7 +79,7 @@ def generate_launch_description():
                     Node(
                         package="warehouse_2d",
                         executable="spawn_localized_vehicle.py",
-                        name="spawn_crtt_mapping_vehicle",
+                        name="spawn_warehouse_mapping_vehicle",
                         parameters=[
                             {
                                 "entity": "vehicle_1",
@@ -87,7 +87,7 @@ def generate_launch_description():
                                 "template": str(vehicle_template),
                                 # One northern-road lane, clear of stations.
                                 "x": 0.0,
-                                "y": 11.4,
+                                "y": 24.0,
                                 "z": 0.3,
                                 "yaw": 0.0,
                                 "random_start": False,
@@ -120,13 +120,21 @@ def generate_launch_description():
                     )
                 ],
             ),
+            Node(
+                package="warehouse_2d",
+                executable="mapping_path.py",
+                name="mapping_path",
+                parameters=[{"use_sim_time": True, "vehicle_name": "vehicle_1"}],
+                output="screen",
+            ),
             TimerAction(
                 period=5.0,
                 actions=[
                     Node(
                         package="rviz2",
                         executable="rviz2",
-                        name="crtt_slam_rviz",
+                        name="warehouse_slam_rviz",
+                        additional_env={"GTK_PATH": ""},
                         arguments=[
                             "-d",
                             str(package_share / "rviz" / "slam_mapping.rviz"),
@@ -142,8 +150,8 @@ def generate_launch_description():
                 actions=[
                     Node(
                         package="warehouse_2d",
-                        executable="crtt_mapping_driver.py",
-                        name="crtt_mapping_driver",
+                        executable="warehouse_mapping_driver.py",
+                        name="warehouse_mapping_driver",
                         parameters=[
                             {
                                 "use_sim_time": True,

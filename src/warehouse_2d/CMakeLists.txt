@@ -14,6 +14,7 @@ if(BUILD_TESTING)
   ament_add_pytest_test(grid_planner_test test/test_grid_planner.py)
   ament_add_pytest_test(web_monitor_test test/test_web_monitor.py)
   ament_add_pytest_test(delivery_tasks_test test/test_delivery_tasks.py)
+  ament_add_pytest_test(amcl_recovery_test test/test_amcl_recovery.py)
 endif()
 
 install(DIRECTORY launch worlds models maps config rviz
@@ -21,9 +22,12 @@ install(DIRECTORY launch worlds models maps config rviz
 install(DIRECTORY web/dist DESTINATION share/${PROJECT_NAME}/web)
 
 install(PROGRAMS
-  scripts/crtt_gate_control.py
-  scripts/crtt_mapping_driver.py
-  scripts/crtt_delivery_simulator.py
+  scripts/warehouse_gate_control.py
+  scripts/warehouse_mapping_driver.py
+  scripts/mapping_path.py
+  scripts/warehouse_delivery_simulator.py
+  scripts/ensure_traffic_amcl.py
+  scripts/gazebo_amcl_validator.py
   scripts/traffic_recorder.py
   scripts/traffic_heatmap.py
   scripts/spawn_localized_vehicle.py

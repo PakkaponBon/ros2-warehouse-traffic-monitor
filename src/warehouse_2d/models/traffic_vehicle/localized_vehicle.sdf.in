@@ -9,6 +9,8 @@
     which remains inside the 0.80 m clearance used by the route planner.
   -->
   <model name="traffic_forklift">
+    <!-- This jointless robot must keep responding after localization/dock waits. -->
+    <allow_auto_disable>false</allow_auto_disable>
     <link name="body">
       <pose>0 0 0 0 0 0</pose>
       <inertial>
@@ -187,7 +189,11 @@
         <remapping>cmd_vel:=cmd_vel</remapping>
         <remapping>odom:=odom</remapping>
       </ros>
-      <update_rate>50</update_rate>
+      <!-- Match the world's 1 ms physics step. A 50 Hz update leaves the
+           body uncontrolled between steps, allowing floor friction to stop
+           slow motion and turns even while nonzero cmd_vel is received.
+           Keep a positive rate so odometry still respects publish_rate. -->
+      <update_rate>1000</update_rate>
       <publish_rate>20</publish_rate>
       <publish_odom>true</publish_odom>
       <publish_odom_tf>true</publish_odom_tf>

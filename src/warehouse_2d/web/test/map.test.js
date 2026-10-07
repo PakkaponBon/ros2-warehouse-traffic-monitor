@@ -97,42 +97,57 @@ test('teleport or localization jump starts a separate path segment', () => {
   assert.deepEqual(segments.map((segment) => segment.length), [2, 2]);
 });
 
-test('heat tooltip gives a concise peak summary and points to click details', () => {
+test('heat hover identifies delayed and confirmed-issue vehicles rather than all visitors', () => {
   const label = heatTooltipLabel({
-    x: 4.25,
-    y: -2.75,
-    count: 90,
-    vehicles: 3,
-    average_speed: 0.24,
-    slow_samples: 36,
+    x: 4.25, y: -2.75, count: 90, average_speed: 0.24,
     time_details: {
       peaks: {
-        count: {
-          start: 100,
-          end: 400,
-          count: 30,
-          vehicles: 2,
-          slow_samples: 12,
-          vehicle_ids: ['vehicle_2', 'vehicle_5'],
-          slow_vehicle_ids: ['vehicle_5'],
-          slow_vehicle_states: [
-            { vehicle_id: 'vehicle_5', states: ['waiting_vehicle'] },
-          ],
-        },
+        count: { start: 100, end: 160, count: 30, slow_samples: 0,
+          vehicle_ids: ['vehicle_2', 'vehicle_5'] },
+        slow_samples: { start: 300, end: 360, slow_samples: 12,
+          slow_vehicle_states: [{ vehicle_id: 'vehicle_5', states: ['waiting_vehicle'] }] },
       },
-      stuck: {
-        events: 2,
-        vehicles: 1,
-        peak: { start: 100, end: 400 },
-      },
+      stuck: { events: 1, vehicle_ids: ['vehicle_5'], latest: { start: 315, end: 355 } },
+      congestion: { events: 1, vehicle_ids: ['vehicle_5', 'vehicle_8'],
+        latest: { start: 325, end: 350 } },
     },
   }, 'count');
 
-  assert.match(label, /Area x 4\.3, y -2\.8/);
-  assert.match(label, /90 position samples · average speed 0\.24 m\/s/);
-  assert.match(label, /Busiest:/);
-  assert.match(label, /Vehicles: vehicle_2, vehicle_5/);
-  assert.match(label, /Click for full details/);
-  assert.doesNotMatch(label, /Slow\/problem:/);
-  assert.doesNotMatch(label, /Confirmed stuck:/);
+  assert.match(label, /90 position readings \(not seconds\)/);
+  assert.match(label, /Worst delay:/);
+  assert.match(label, /Slow \/ blocked: vehicle_5 \(waiting vehicle\)/);
+  assert.match(label, /Confirmed stuck: 1 event\(s\) · vehicle_5/);
+  assert.match(label, /Confirmed congestion nearby: 1 event\(s\) · vehicle_5, vehicle_8/);
+  assert.doesNotMatch(label, /Slow \/ blocked: vehicle_2/);
+});
+
+test('heat hover does not call ordinary vehicle visits a traffic problem', () => {
+  const label = heatTooltipLabel({ x: 1, y: 2, count: 10, time_details: {
+    peaks: { slow_samples: { slow_samples: 0 } },
+    stuck: { events: 0 }, congestion: { events: 0 },
+  } });
+  assert.match(label, /No recorded delay or confirmed issue/);
+});
+
+test('heat view hover and click prefer the heat area over an overlapping vehicle', () => {
+  const map = mapProjection(false);
+  map.canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 400 });
+  map.viewport = new MapViewport(map.canvas);
+  const point = map.project(0, 0);
+  map.hits = [
+    { ...point, radius: 20, priority: 0, heatValue: { x: 0, y: 0 }, heatMetric: 'slow_samples', label: 'Heat area' },
+    { ...point, radius: 15, priority: 3, vehicleId: 'vehicle_1', label: 'Vehicle' },
+  ];
+  map.lastOptions = { heat: true, stuck: false, congestion: false };
+  map.tooltip = { style: {}, textContent: '' };
+  map.canvas.parentElement = { getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    clientWidth: 400, clientHeight: 400 };
+  const calls = [];
+  map.onHeatSelect = () => calls.push('heat');
+  map.onVehicleSelect = () => calls.push('vehicle');
+  const event = { clientX: point.x, clientY: point.y };
+  map.showTooltip(event);
+  assert.equal(map.tooltip.textContent, 'Heat area');
+  map.selectItem(event);
+  assert.deepEqual(calls, ['heat']);
 });

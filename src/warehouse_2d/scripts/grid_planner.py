@@ -1,6 +1,6 @@
 """Small occupancy-grid A* planner used by the simulated traffic fleet."""
 
-from collections import deque
+from collections import Counter, defaultdict, deque
 import heapq
 import math
 from pathlib import Path
@@ -63,13 +63,17 @@ class OccupancyGridPlanner:
         width = math.ceil(image.width / scale)
         height = math.ceil(image.height / scale)
         free_pixel = 255.0 * (1.0 - float(metadata.get("free_thresh", 0.25)))
+        trinary = metadata.get("mode", "trinary") == "trinary"
 
         blocked = set()
         pixels = image.load()
         for pixel_y in range(image.height):
             grid_y = (image.height - 1 - pixel_y) // scale
             for pixel_x in range(image.width):
-                if pixels[pixel_x, pixel_y] < free_pixel:
+                pixel = pixels[pixel_x, pixel_y]
+                # ROS map_saver writes unexplored trinary cells as grey 205.
+                # The occupancy threshold alone would otherwise call them free.
+                if pixel < free_pixel or (trinary and pixel == 205):
                     blocked.add((pixel_x // scale, grid_y))
 
         inflation = max(1, math.ceil(float(robot_radius) / resolution))
@@ -321,9 +325,173 @@ class OccupancyGridPlanner:
         steps = max(abs(x1 - x0), abs(y1 - y0))
         if steps == 0:
             return True
+        previous = start
         for step in range(steps + 1):
             ratio = step / steps
             cell = (round(x0 + (x1 - x0) * ratio), round(y0 + (y1 - y0) * ratio))
             if cell not in self.free or cell in blocked:
                 return False
+            if cell[0] != previous[0] and cell[1] != previous[1]:
+                sides = ((cell[0], previous[1]), (previous[0], cell[1]))
+                if any(side not in self.free or side in blocked for side in sides):
+                    return False
+            previous = cell
         return True
+
+    def simplify_weighted(self, path, penalties, blocked):
+        """Smooth corners without shortcutting the traffic-aware detour."""
+        if len(path) < 3:
+            return path
+        costs = [0.0]
+        for before, after in zip(path, path[1:]):
+            costs.append(costs[-1] + math.dist(before, after) * (1 + penalties.get(after, 0.0)))
+        simplified, anchor = [path[0]], 0
+        while anchor < len(path) - 1:
+            candidate = len(path) - 1
+            while candidate > anchor + 1:
+                start, end = path[anchor], path[candidate]
+                if self._line_is_free(start, end, blocked):
+                    steps = max(abs(end[0] - start[0]), abs(end[1] - start[1]))
+                    previous, cost = start, 0.0
+                    for i in range(1, steps + 1):
+                        cell = (round(start[0] + (end[0] - start[0]) * i / steps),
+                                round(start[1] + (end[1] - start[1]) * i / steps))
+                        cost += math.dist(previous, cell) * (1 + penalties.get(cell, 0.0))
+                        previous = cell
+                    if cost <= (costs[candidate] - costs[anchor]) * 1.01 + 1e-9:
+                        break
+                candidate -= 1
+            simplified.append(path[candidate])
+            anchor = candidate
+        return simplified
+
+
+class FleetRoamingPlanner:
+    """Share destination coverage and soft route reservations across a fleet.
+
+    Only known, connected free cells are eligible. Reservations are costs,
+    rather than obstacles: a shared narrow aisle remains usable. Goals survive
+    replans (including localization recovery) until physical arrival.
+    """
+
+    def __init__(self, planner, random_source, sector_size=8.0):
+        self.planner, self.random = planner, random_source
+        self.sector_size = sector_size
+        self.sectors = defaultdict(list)
+        for cell in sorted(planner.free):
+            self.sectors[(planner.component_for[cell], self.sector(cell))].append(cell)
+        self.assignments = Counter()
+        self.visited = set()
+        self.goals, self.routes = {}, {}
+        self.completed = Counter()
+        self.recent_goals = defaultdict(lambda: deque(maxlen=8))
+        self.last_position = {}
+        self.history = deque(maxlen=600)
+        self.traffic = Counter()
+
+    def sector(self, cell):
+        x, y = self.planner.cell_to_world(cell)
+        return math.floor(x / self.sector_size), math.floor(y / self.sector_size)
+
+    @staticmethod
+    def _traffic_cell(cell):
+        return cell[0] // 3, cell[1] // 3
+
+    def observe(self, name, position):
+        cell = self.planner.nearest_free(*position, maximum_radius=3)
+        if cell is None:
+            return
+        self.visited.add((self.planner.component_for[cell], self.sector(cell)))
+        previous = self.last_position.get(name)
+        self.last_position[name] = cell
+        bucket = self._traffic_cell(cell)
+        if previous is None or bucket != self._traffic_cell(previous):
+            if len(self.history) == self.history.maxlen:
+                self.traffic[self.history[0]] -= 1
+            self.history.append(bucket)
+            self.traffic[bucket] += 1
+        route = self.routes.get(name, [])
+        if route:
+            closest = min(range(len(route)), key=lambda i: math.dist(cell, route[i]))
+            # A jump invalidates the old reservation; the controller will
+            # replan when localization readiness is restored.
+            self.routes[name] = route[closest:] if math.dist(cell, route[closest]) < 10 else []
+
+    def finish(self, name, reached=True):
+        goal = self.goals.pop(name, None)
+        if goal is not None:
+            self.recent_goals[name].append(goal)
+            if reached:
+                self.completed[name] += 1
+        self.routes.pop(name, None)
+
+    def choose_goal(self, name, start):
+        component = self.planner.component_for[start]
+        other_goals = [cell for other, cell in self.goals.items() if other != name]
+        recent = list(self.recent_goals[name])
+        # Relax spacing only if a small reachable component has no candidates.
+        for minimum, separation, history_distance in ((6.0, 3.0, 5.0), (3.0, 1.5, 0.0),
+                                                       (self.planner.resolution, 0.0, 0.0)):
+            eligible = {}
+            for key, cells in self.sectors.items():
+                if key[0] != component:
+                    continue
+                candidates = [cell for cell in cells
+                              if math.dist(cell, start) * self.planner.resolution >= minimum
+                              and all(math.dist(cell, goal) * self.planner.resolution > separation
+                                      for goal in other_goals)
+                              and all(math.dist(cell, goal) * self.planner.resolution > history_distance
+                                      for goal in recent)]
+                if candidates:
+                    eligible[key] = candidates
+            if eligible:
+                least = min(self.assignments[key] for key in eligible)
+                keys = [key for key in eligible if self.assignments[key] == least]
+                key = self.random.choice(keys)
+                goal = self.random.choice(eligible[key])
+                self.assignments[key] += 1
+                self.goals[name] = goal
+                return goal
+        return None
+
+    def penalties(self, name):
+        penalties = {cell: min(1.5, 0.35 * self.traffic[self._traffic_cell(cell)])
+                     for cell in self.planner.free if self.traffic[self._traffic_cell(cell)] > 0}
+        # Reserve a lane-width band around other vehicles' remaining routes.
+        radius = max(1, math.ceil(0.6 / self.planner.resolution))
+        for other, route in self.routes.items():
+            if other == name:
+                continue
+            reserved = {(x + dx, y + dy) for x, y in route
+                        for dx in range(-radius, radius + 1)
+                        for dy in range(-radius, radius + 1)
+                        if dx * dx + dy * dy <= radius * radius}
+            for cell in reserved & self.planner.free:
+                penalties[cell] = penalties.get(cell, 0.0) + 2.5
+        return penalties
+
+    def plan(self, name, position, other_positions=()):
+        start = self.planner.nearest_free(*position)
+        if start is None:
+            return [], None
+        goal = self.goals.get(name)
+        if goal is not None and self.planner.component_for[goal] != self.planner.component_for[start]:
+            # A relocation into another disconnected area needs a new goal.
+            self.goals.pop(name)
+            self.routes.pop(name, None)
+            goal = None
+        if goal is None:
+            goal = self.choose_goal(name, start)
+        if goal is None:
+            return [], None
+        penalties = self.penalties(name)
+        temporary = self.planner.blocked_near(other_positions)
+        for blocked in (temporary, set()):
+            cells = self.planner.plan_weighted_cells(start, goal, penalties, blocked)
+            if not cells:
+                continue
+            self.routes[name] = cells
+            corners = self.planner.simplify_weighted(cells, penalties, blocked)
+            return [self.planner.cell_to_world(cell) for cell in corners[1:]], self.planner.cell_to_world(goal)
+        self.routes.pop(name, None)
+        return [], self.planner.cell_to_world(goal)

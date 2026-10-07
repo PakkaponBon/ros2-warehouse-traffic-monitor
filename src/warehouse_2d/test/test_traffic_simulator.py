@@ -210,10 +210,65 @@ def test_fault_event_store_records_terminal_action_once(tmp_path):
     connection.close()
 
 
-def test_delivery_controller_exposes_only_its_own_layout():
-    from crtt_delivery_simulator import CrttDeliverySimulator
-    assert set(CrttDeliverySimulator.PROFILES) == {"crtt_delivery"}
-    profile = CrttDeliverySimulator.PROFILES["crtt_delivery"]
-    assert len(profile["starts"]) == 4
-    assert profile["map_navigation"]
-    assert profile["random_vehicle"] == "none"
+def test_delivery_controller_exposes_only_its_delivery_layouts():
+    from warehouse_delivery_simulator import WarehouseDeliverySimulator
+    assert set(WarehouseDeliverySimulator.PROFILES) == {"warehouse_delivery", "warehouse_roads"}
+    assert len(WarehouseDeliverySimulator.PROFILES["warehouse_delivery"]["starts"]) == 4
+    assert len(WarehouseDeliverySimulator.PROFILES["warehouse_roads"]["starts"]) == 8
+    for profile in WarehouseDeliverySimulator.PROFILES.values():
+        assert profile["map_navigation"]
+        assert profile["random_vehicle"] == "none"
+        assert len(profile["fixed_routes"]) == len(profile["starts"])
+
+
+def roaming_controller():
+    import random
+    from grid_planner import FleetRoamingPlanner, OccupancyGridPlanner
+    from warehouse_delivery_simulator import WarehouseDeliverySimulator
+    node = WarehouseDeliverySimulator.__new__(WarehouseDeliverySimulator)
+    node.planner = OccupancyGridPlanner(1, (0, 0), 24, 24,
+                                       {(x, y) for x in range(24) for y in range(24)})
+    node.roaming = FleetRoamingPlanner(node.planner, random.Random(42))
+    node.observed = {}
+    return node
+
+
+def test_roaming_controller_picks_next_goal_only_after_physical_arrival():
+    node = roaming_controller()
+    state = dict(x=.5, y=.5, path=[], path_index=0, goal=None, last_replan=0)
+    assert node._map_target('a', state, 10) is not None
+    first = state['goal']
+    # Localization recovery empties the path. It must keep the destination.
+    state.update(path=[], goal=None, last_replan=0)
+    assert node._map_target('a', state, 11) is not None
+    assert state['goal'] == first
+    assert node.roaming.completed['a'] == 0
+    state.update(x=first[0], y=first[1])
+    assert node._map_target('a', state, 12) is not None
+    assert state['goal'] != first
+    assert node.roaming.completed['a'] == 1
+
+
+def test_roaming_abandons_unproductive_goal_without_counting_arrival(monkeypatch):
+    from types import SimpleNamespace
+    node = roaming_controller()
+    warnings = []
+    monkeypatch.setattr(node, 'get_logger', lambda: SimpleNamespace(warning=warnings.append))
+    state = dict(x=.5, y=.5, path=[], path_index=0, goal=None, last_replan=0)
+    node._map_target('a', state, 10)
+    first = state['goal']
+    for now in range(11, 56):
+        node._map_target('a', state, now)
+    assert state['goal'] != first
+    assert node.roaming.completed['a'] == 0
+    assert len(warnings) == 1
+
+
+def test_roaming_timeout_does_not_count_localization_pause():
+    node = roaming_controller()
+    state = dict(x=.5, y=.5, path=[], path_index=0, goal=None, last_replan=0)
+    node._map_target('a', state, 10)
+    first = state['goal']
+    node._map_target('a', state, 200)  # No controller calls during interlock.
+    assert state['goal'] == first
+    assert node.roaming.completed['a'] == 0

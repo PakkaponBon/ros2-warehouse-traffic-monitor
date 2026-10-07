@@ -73,6 +73,14 @@ export async function getState(query) {
   return state;
 }
 
+export async function getSelectedTrack(vehicleId, start, end) {
+  const track = await request(`/api/track?${new URLSearchParams({ vehicle_id: vehicleId, start, end })}`);
+  if (track.vehicle_id !== vehicleId || !Array.isArray(track.points)) {
+    throw new Error('Selected vehicle route unavailable');
+  }
+  return track;
+}
+
 export async function getRouteSuggestion(requestBody) {
   const route = await request('/api/routes/suggest', {
     method: 'POST',

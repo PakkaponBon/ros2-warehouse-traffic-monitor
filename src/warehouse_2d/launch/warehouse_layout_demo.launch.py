@@ -1,4 +1,4 @@
-"""Show the stylized CRTT layout in Gazebo without maps or vehicles."""
+"""Show the enlarged delivery warehouse in Gazebo without vehicles."""
 
 from pathlib import Path
 
@@ -7,6 +7,7 @@ from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
+    GroupAction,
     IncludeLaunchDescription,
     TimerAction,
 )
@@ -16,20 +17,27 @@ from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
-    package_share = Path(get_package_share_directory("warehouse_2d"))
+    # Resolve beside this launch file so an older warehouse_2d overlay cannot
+    # silently supply its compact world when this file is launched directly.
+    world_file = Path(__file__).resolve().parent.parent / "worlds" / "delivery_site.world"
     gazebo_share = Path(get_package_share_directory("gazebo_ros"))
     return LaunchDescription(
         [
             DeclareLaunchArgument("gui", default_value="true"),
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource(
-                    str(gazebo_share / "launch" / "gzserver.launch.py")
+            DeclareLaunchArgument("world", default_value=str(world_file)),
+            GroupAction(actions=[
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        str(gazebo_share / "launch" / "gzserver.launch.py")
+                    ),
+                    launch_arguments={
+                        "world": LaunchConfiguration("world"),
+                        "verbose": "false",
+                        # The fleet's profile is not a Gazebo physics preset.
+                        "profile": "",
+                    }.items(),
                 ),
-                launch_arguments={
-                    "world": str(package_share / "worlds" / "crtt_layout_demo.world"),
-                    "verbose": "false",
-                }.items(),
-            ),
+            ]),
             # The optional ROS EOL GUI plugin crashes on this Gazebo Classic
             # installation. The ordinary client renders this demo correctly.
             TimerAction(

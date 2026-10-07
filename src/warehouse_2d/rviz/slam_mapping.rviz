@@ -33,6 +33,18 @@ Visualization Manager:
         Depth: 5
       Size (m): 0.04
       Style: Points
+    - Class: rviz_default_plugins/Path
+      Name: Mapping Vehicle Path
+      Enabled: true
+      Color: 255; 190; 0
+      Line Style: Lines
+      Line Width: 0.08
+      Topic:
+        Value: /traffic/vehicle_1/mapping_path
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+        Depth: 1
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true

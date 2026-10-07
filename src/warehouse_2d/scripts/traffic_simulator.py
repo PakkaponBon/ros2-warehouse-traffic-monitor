@@ -105,7 +105,7 @@ class TrafficSimulator(Node):
         self.declare_parameter("update_period", 0.2)
         self.declare_parameter("seed", 42)
         self.declare_parameter("model_prefix", "vehicle_")
-        self.declare_parameter("profile", "crtt_delivery")
+        self.declare_parameter("profile", "warehouse_delivery")
         self.declare_parameter("pose_source", "gazebo")
         self.declare_parameter("map_yaml", "")
         self.declare_parameter("planning_resolution", 0.30)
@@ -425,6 +425,17 @@ class TrafficSimulator(Node):
             payload = json.loads(message.data)
         except (TypeError, ValueError):
             return
+        if not isinstance(payload, dict):
+            return
+        previous = self.localization_readiness.get(name)
+        previous_payload = {} if previous is None else previous[0]
+        if (payload.get("recovery_generation") != previous_payload.get("recovery_generation")
+                or (previous_payload.get("drive_allowed") is True
+                    and payload.get("drive_allowed") is not True)):
+            # A corrected pose must plan from its new location, rather than
+            # continue the route cached before the relocation/interlock.
+            self.states[name].update(
+                path=[], path_index=0, goal=None, last_replan=0.0, blocked_since=None)
         self.localization_readiness[name] = (payload, time.monotonic())
 
     def on_models(self, message):

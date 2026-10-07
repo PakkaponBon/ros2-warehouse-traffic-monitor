@@ -244,3 +244,43 @@ body.dashboard {
   .dashboard .workspace-footer { font-size: 9px; }
 }
 @media (prefers-reduced-motion: reduce) { .dashboard * { scroll-behavior: auto !important; } }
+
+.dashboard .history-range { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; margin-top: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.dashboard .history-range .field { min-width: 205px; }
+.dashboard .history-range input { width: 100%; }
+.dashboard .history-range button { white-space: nowrap; }
+.dashboard .range-feedback { color: var(--muted); font-size: 11px; align-self: center; }
+.dashboard .active-period { margin: 9px 2px 0; color: #426c56; font-size: 12px; font-weight: 600; }
+@media (max-width: 700px) {
+  .dashboard .history-range .field { flex: 1 1 100%; min-width: 0; }
+  .dashboard .history-range button { width: 100%; }
+}
+
+.dashboard #liveSummaryHeading[hidden], .dashboard #deliveryMetrics[hidden] { display: none; }
+
+.dashboard .traffic-chart-panel { margin-top: 20px; }
+.dashboard .traffic-chart-panel .panel-head { min-height: 68px; }
+.dashboard .traffic-chart-content { padding: 16px 20px 18px; }
+.dashboard .traffic-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; color: #64756c; font-size: 11px; margin-bottom: 10px; }
+.dashboard .traffic-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dashboard .traffic-legend-bar { display: inline-block; width: 16px; height: 10px; border-radius: 2px; background: #69ad94; }
+.dashboard .traffic-event { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.dashboard .traffic-event.stuck { background: #e0a43a; }
+.dashboard .traffic-event.congestion { background: #d75d59; }
+.dashboard .traffic-chart-scroll { overflow-x: auto; }
+.dashboard .traffic-chart-plot { display: grid; grid-template-columns: repeat(var(--traffic-columns), minmax(0, 1fr)); align-items: end; gap: 5px; min-height: 142px; border-bottom: 1px solid #d7e1da; background: repeating-linear-gradient(to top, transparent 0, transparent 34px, #edf1ee 35px, transparent 36px); }
+.dashboard .traffic-time-bin { min-width: 0; height: 132px; min-height: 0; padding: 4px 2px 0; border: 0; border-radius: 5px 5px 0 0; background: transparent; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; gap: 3px; }
+.dashboard .traffic-time-bin:hover, .dashboard .traffic-time-bin.selected { background: #eaf4ee; }
+.dashboard .traffic-time-bin:focus-visible { outline-offset: -2px; }
+.dashboard .traffic-time-events { min-height: 10px; display: flex; align-items: center; justify-content: center; gap: 3px; }
+.dashboard .traffic-time-bar { display: block; width: 100%; border-radius: 3px 3px 0 0; background: #dce8e1; }
+.dashboard .traffic-time-bar.has-delay { background: #69ad94; }
+.dashboard .traffic-time-bin.selected .traffic-time-bar.has-delay { background: #247b60; }
+.dashboard .traffic-chart-axis { display: flex; justify-content: space-between; gap: 10px; margin-top: 6px; color: #718176; font-size: 10px; }
+.dashboard .traffic-chart-note { margin: 10px 0 0; color: #718176; font-size: 10px; }
+.dashboard .traffic-chart-detail { min-height: 32px; margin: 12px 0 0; padding: 9px 11px; border-radius: 7px; background: #f3f7f4; color: #436857; font-size: 11px; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .dashboard .traffic-chart-content { padding: 14px; }
+  .dashboard .traffic-chart-panel .panel-head { flex-wrap: wrap; }
+  .dashboard .traffic-chart-axis { font-size: 9px; }
+}

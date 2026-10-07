@@ -201,7 +201,7 @@ function vehicleIssues(vehicle) {
   else if (vehicle.status === 'stale') issues.push('Position updates are delayed');
   else if (vehicle.status !== 'online') issues.push('No position received yet');
   if (['stale', 'offline', 'unavailable'].includes(vehicle.localization?.state)) issues.push('Check localization');
-  if (vehicle.lidar?.state === 'unavailable') issues.push('LiDAR unavailable');
+  if (['stale', 'offline', 'unavailable'].includes(vehicle.lidar?.state)) issues.push('Check LiDAR updates');
   if (['stale', 'offline'].includes(vehicle.uwb?.freshness)) issues.push('UWB updates are delayed or missing');
   else if (['caution', 'disagreement', 'unavailable', 'uwb_unavailable', 'waiting_amcl', 'unsynchronized'].includes(vehicle.uwb?.state)) issues.push('Check UWB validation');
   if (vehicle.injected_faults?.length) issues.push('Simulation fault active');
@@ -241,7 +241,7 @@ function renderVehicles(vehicles) {
             <div><span>Movement</span><b>${escapeHtml(statusLabel(vehicle.motion_state))}</b><small>${valueOrUnknown(vehicle.speed, ' m/s')}</small></div>
             <div><span>Localization</span>${badge(localization.state)}<small>${escapeHtml(localization.source || 'No localization source')} · covariance ${valueOrUnknown(localization.covariance_trace)}</small></div>
             <div><span>UWB validation</span>${badge(uwbDisplayState)}<small>Last result ${escapeHtml(statusLabel(uwb.state))} · ${uwb.visible_tag_count || 0} tags · ${formatAge(uwb.age_seconds)}</small></div>
-            <div><span>LiDAR</span>${badge(lidar.state)}<small>${escapeHtml(lidar.detail || 'No sensor diagnostic')}</small></div>
+            <div><span>LiDAR</span>${badge(lidar.state)}<small>${escapeHtml(lidar.detail || 'No sensor diagnostic')} · ${formatAge(lidar.age_seconds)}</small></div>
           </div>
         </div>
       </details>`;

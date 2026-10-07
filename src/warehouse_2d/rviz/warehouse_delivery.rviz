@@ -12,7 +12,7 @@ Visualization Manager:
       Cell Size: 1
       Plane Cell Count: 60
     - Class: rviz_default_plugins/Map
-      Name: CRTT Map
+      Name: Warehouse Map
       Enabled: true
       Alpha: 0.75
       Topic:

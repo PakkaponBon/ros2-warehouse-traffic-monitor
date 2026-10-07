@@ -1,6 +1,7 @@
 import threading
 import json
 import time
+import pytest
 from types import SimpleNamespace
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ def make_monitor(database):
     monitor.lock = threading.Lock()
     monitor.validation_status = {}
     monitor.initialization_status = {}
+    monitor.scan_received = {}
     monitor.simulation_faults_enabled = False
     monitor.simulation_vehicle_names = tuple(
         f"vehicle_{index}" for index in range(1, 5)
@@ -44,6 +46,66 @@ def make_monitor(database):
     }
     monitor.get_parameter = lambda name: SimpleNamespace(value=parameters[name])
     return monitor
+
+
+def test_selected_track_keeps_dense_route_samples_without_other_vehicles(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    with monitor.connection:
+        monitor.connection.executemany(
+            """INSERT INTO samples
+               (observed_at, sim_time, vehicle_id, x, y, speed, source,
+                frame_id, motion_state, commanded_speed, intent_active)
+               VALUES (?, ?, ?, ?, 0, 0.5, 'amcl', 'map', 'moving', 0.5, 1)""",
+            [(float(index), float(index), "vehicle_1", index * 0.5)
+             for index in range(300)]
+            + [(100.0, 100.0, "vehicle_2", 999.0)],
+        )
+    track = monitor.selected_track({
+        "vehicle_id": ["vehicle_1"], "start": ["0"], "end": ["300"],
+    })
+    assert len(track["points"]) == 300
+    assert track["points"][149][:3] == [74.5, 0.0, 149.0]
+    assert all(point[0] != 999.0 for point in track["points"])
+    for query in (
+        {"vehicle_id": ["vehicle_99"], "start": ["0"], "end": ["300"]},
+        {"vehicle_id": ["vehicle_1"], "start": ["0"], "end": ["7200"]},
+    ):
+        with pytest.raises(ValueError):
+            monitor.selected_track(query)
+
+
+
+def test_selected_track_reports_recording_gaps_and_simulator_reference(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    try:
+        with monitor.connection:
+            monitor.connection.executemany(
+                """INSERT INTO samples
+                   (observed_at, vehicle_id, x, y, speed, source, frame_id)
+                   VALUES (?, 'vehicle_1', ?, 0, 0.5, 'amcl', 'map')""",
+                [(100.0, 0.0), (101.0, 1.0), (120.0, 2.0), (121.0, 20.0)],
+            )
+            monitor.connection.executemany(
+                """INSERT INTO localization_metrics
+                   (observed_at, vehicle_id, estimated_x, estimated_y,
+                    ground_truth_x, ground_truth_y, position_error, yaw_error,
+                    covariance_trace)
+                   VALUES (?, 'vehicle_1', 0, 0, 0, 0, ?, 0, 0.1)""",
+                [(100.0, 0.1), (101.0, 0.2), (120.0, 0.4), (121.0, 4.0)],
+            )
+        result = monitor.selected_track({
+            "vehicle_id": ["vehicle_1"], "start": ["100"], "end": ["122"],
+        })
+        quality = result["quality"]
+        assert len(result["points"]) == 4
+        assert quality["time_basis"] == "recorder_wall_clock"
+        assert quality["max_gap_s"] == 19.0
+        assert quality["path_breaks"] == 2
+        assert quality["frames"] == ["map"]
+        assert quality["simulation_reference"]["source"] == "gazebo_ground_truth"
+        assert quality["simulation_reference"]["p95_error_m"] == 4.0
+    finally:
+        monitor.connection.close()
 
 
 def test_delivery_snapshot_waits_for_controller_and_detects_stale_heartbeat(tmp_path):
@@ -156,6 +218,11 @@ def test_stuck_timeline_reports_busiest_location_per_minute(tmp_path):
                 ("vehicle_3", 125.0, 130.0, 12.0, 8.0),
             ],
         )
+        monitor.connection.execute(
+            """INSERT INTO congestion_events
+               (group_key, vehicle_count, started_at, ended_at, x, y)
+               VALUES ('vehicle_1,vehicle_2', 2, 130, 150, 4.2, 5.2)"""
+        )
 
     result = monitor.query({"start": ["60"], "end": ["180"]})
 
@@ -165,10 +232,24 @@ def test_stuck_timeline_reports_busiest_location_per_minute(tmp_path):
     second = timeline["buckets"][1]
     assert second["start"] == 120.0
     assert second["total_vehicles"] == 3
+    assert second["stuck_events"] == 3
+    assert second["congestion_events"] == 1
     assert second["hotspot"]["vehicles"] == 2
     assert second["hotspot"]["vehicle_ids"] == ["vehicle_1", "vehicle_2"]
+    assert second["hotspot"]["congestion_events"] == 1
     assert 4.1 < second["hotspot"]["x"] < 4.3
     monitor.connection.close()
+
+
+def test_issue_timeline_focuses_the_last_actual_event_time():
+    timeline = WebMonitor._stuck_timeline(
+        [], 120.0, 180.0, 1.5,
+        congestion_rows=[("vehicle_2,vehicle_3", 4.2, 5.2, 2, 130.0, 150.0)],
+    )
+    bucket = timeline["buckets"][0]
+    assert bucket["end"] == 180.0
+    assert bucket["hotspot"]["last_event_at"] == 150.0
+    assert bucket["hotspot"]["vehicle_ids"] == ["vehicle_2", "vehicle_3"]
 
 
 def test_heat_cells_report_metric_peak_times_and_local_stuck_history(tmp_path):
@@ -193,6 +274,11 @@ def test_heat_cells_report_metric_peak_times_and_local_stuck_history(tmp_path):
                (vehicle_id, started_at, ended_at, x, y, max_speed)
                VALUES ('vehicle_2', 315, 355, 4.2, 5.2, 0.0)"""
         )
+        monitor.connection.execute(
+            """INSERT INTO congestion_events
+               (group_key, vehicle_count, started_at, ended_at, x, y)
+               VALUES ('vehicle_2,vehicle_3', 2, 325, 350, 4.2, 5.2)"""
+        )
 
     result = monitor.query({"start": ["60"], "end": ["600"]})
 
@@ -216,7 +302,34 @@ def test_heat_cells_report_metric_peak_times_and_local_stuck_history(tmp_path):
     assert details["stuck"]["events"] == 1
     assert details["stuck"]["vehicle_ids"] == ["vehicle_2"]
     assert details["stuck"]["peak"]["start"] == 300.0
+    assert details["stuck"]["latest"]["vehicle_ids"] == ["vehicle_2"]
+    assert details["congestion"]["vehicle_ids"] == ["vehicle_2", "vehicle_3"]
+    assert details["congestion"]["latest"]["start"] == 325.0
+    assert result["congestion"][0]["vehicle_ids"] == ["vehicle_2", "vehicle_3"]
     assert monitor._heat_bucket_seconds(0.0, 3600.0) == 300
+    monitor.connection.close()
+
+
+def test_heat_area_links_nearby_congestion_centroid_to_recorded_vehicle_cell(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    with monitor.connection:
+        monitor.connection.execute(
+            """INSERT INTO samples
+               (observed_at, sim_time, vehicle_id, x, y, speed, source,
+                frame_id, motion_state, commanded_speed, intent_active)
+               VALUES (100, 10, 'vehicle_1', 4.1, 5.1, 0.0, 'amcl', 'map',
+                       'waiting_vehicle', 0.0, 1)"""
+        )
+        monitor.connection.execute(
+            """INSERT INTO congestion_events
+               (group_key, vehicle_count, started_at, ended_at, x, y)
+               VALUES ('vehicle_1,vehicle_2', 2, 100, 110, 5.0, 5.2)"""
+        )
+    result = monitor.query({"start": ["90"], "end": ["120"]})
+    assert len(result["density"]) == 1
+    nearby = result["density"][0]["time_details"]["congestion"]
+    assert nearby["events"] == 1
+    assert nearby["vehicle_ids"] == ["vehicle_1", "vehicle_2"]
     monitor.connection.close()
 
 
@@ -263,6 +376,43 @@ def test_health_snapshot_distinguishes_online_stale_offline_and_unknown(tmp_path
     assert result["services"]["traffic_recorder"]["status"] == "online"
     assert result["simulation_faults"]["enabled"] is False
     monitor.connection.close()
+
+
+def test_localizing_interlock_overrides_recent_amcl_sample_in_health(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    with monitor.connection:
+        monitor.connection.execute(
+            """INSERT INTO samples
+               (observed_at, sim_time, vehicle_id, x, y, speed, source,
+                frame_id, motion_state, commanded_speed, intent_active)
+               VALUES (98, 10, 'vehicle_1', 1, 2, 0.1, 'amcl', 'map',
+                       'localizing', 0, 1)"""
+        )
+    vehicle = monitor.health_snapshot(now=100)["vehicles"][0]
+    assert vehicle["status"] == "online"
+    assert vehicle["localization"]["state"] == "unavailable"
+    monitor.connection.close()
+
+
+def test_health_snapshot_uses_observed_laserscan_freshness(tmp_path):
+    monitor = make_monitor(tmp_path / "traffic.db")
+    monitor.scan_received = {
+        "vehicle_1": 98.0,
+        "vehicle_2": 90.0,
+        "vehicle_3": 70.0,
+    }
+    try:
+        vehicles = {
+            item["vehicle_id"]: item
+            for item in monitor.health_snapshot(now=100.0)["vehicles"]
+        }
+        assert vehicles["vehicle_1"]["lidar"]["state"] == "online"
+        assert vehicles["vehicle_2"]["lidar"]["state"] == "stale"
+        assert vehicles["vehicle_3"]["lidar"]["state"] == "offline"
+        assert vehicles["vehicle_4"]["lidar"]["state"] == "unknown"
+        assert vehicles["vehicle_2"]["lidar"]["age_seconds"] == 10.0
+    finally:
+        monitor.connection.close()
 
 
 def test_simulation_fault_control_is_guarded_and_publishes_full_state(tmp_path):
@@ -336,7 +486,7 @@ def test_side_task_control_is_guarded_and_publishes_valid_request(tmp_path):
     monitor.connection.close()
 
 
-def test_normal_turning_does_not_add_heat_but_remains_in_vehicle_history(tmp_path):
+def test_normal_turning_stays_out_of_heat_and_is_publicly_grouped_as_moving(tmp_path):
     monitor = make_monitor(tmp_path / "traffic.db")
     rows = [
         (100.0, "vehicle_1", 1.1, 2.1, 0.0, "turning"),
@@ -365,6 +515,66 @@ def test_normal_turning_does_not_add_heat_but_remains_in_vehicle_history(tmp_pat
     assert peak["count"] == 2
     assert peak["vehicle_ids"] == ["vehicle_3", "vehicle_4"]
     assert any(vehicle["vehicle_id"] == "vehicle_1"
-               and vehicle["motion_state"] == "turning" for vehicle in result["latest"])
+               and vehicle["motion_state"] == "moving" for vehicle in result["latest"])
     assert any(track["vehicle_id"] == "vehicle_1" for track in result["tracks"])
     monitor.connection.close()
+
+
+def test_traffic_timeline_counts_distinct_delayed_vehicles_and_active_issues(tmp_path):
+    monitor = make_monitor(tmp_path / "timeline.db")
+    with monitor.connection:
+        monitor.connection.executemany(
+            """INSERT INTO samples
+               (observed_at, vehicle_id, x, y, speed, source, frame_id,
+                motion_state, commanded_speed, intent_active)
+               VALUES (?, ?, ?, 0, ?, 'amcl', 'map', ?, 0.5, 1)""",
+            [
+                (100.0, "vehicle_1", 1.0, 0.0, "waiting_vehicle"),
+                (101.0, "vehicle_1", 2.0, 0.0, "waiting_vehicle"),
+                (102.0, "vehicle_2", 3.0, 0.0, "blocked_obstacle"),
+                (103.0, "vehicle_3", 4.0, 0.0, "turning"),
+                (310.0, "vehicle_2", 3.0, 0.5, "moving"),
+            ],
+        )
+        monitor.connection.execute(
+            """INSERT INTO stuck_events
+               (vehicle_id, started_at, ended_at, x, y, max_speed)
+               VALUES ('vehicle_2', 100, 130, 3, 0, 0)"""
+        )
+        monitor.connection.execute(
+            """INSERT INTO congestion_events
+               (group_key, vehicle_count, started_at, ended_at, x, y)
+               VALUES ('vehicle_1,vehicle_2', 2, 105, 120, 2, 0)"""
+        )
+
+    result = monitor.query({"start": ["60"], "end": ["360"]})
+    timeline = result["traffic_timeline"]
+    assert timeline["bucket_seconds"] == 60
+    assert len(timeline["buckets"]) == 5
+    first = timeline["buckets"][0]
+    assert first["slow_vehicles"] == 2
+    assert first["slow_vehicle_ids"] == ["vehicle_1", "vehicle_2"]
+    assert first["stuck_events"] == 1
+    assert first["congestion_events"] == 1
+    assert first["issue_vehicle_ids"] == ["vehicle_1", "vehicle_2"]
+    assert first["hotspot"]["last_event_at"] == 120.0
+    second = timeline["buckets"][1]
+    assert second["slow_vehicles"] == 0
+    assert second["stuck_events"] == 1
+    assert second["congestion_events"] == 0
+    assert timeline["buckets"][-1]["slow_vehicles"] == 0
+    monitor.connection.close()
+
+
+def test_traffic_timeline_keeps_long_selected_ranges_compact():
+    start = 0.0
+    end = 90 * 86400.0
+    seconds = WebMonitor._heat_bucket_seconds(start, end)
+    issues = WebMonitor._stuck_timeline(
+        [], start, end, 1.5, maximum_buckets=24
+    )
+    timeline = WebMonitor._traffic_timeline([], issues, start, end)
+    assert seconds == issues["bucket_seconds"]
+    assert len(timeline["buckets"]) <= 24
+    assert timeline["buckets"][0]["start"] == start
+    assert timeline["buckets"][-1]["end"] == end
