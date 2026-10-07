@@ -82,7 +82,7 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   printf 'ROS 2 Humble setup missing: /opt/ros/humble/setup.bash\n' >&2
   exit 1
 fi
-source /opt/ros/humble/setup.bash
+source "$workspace_dir/ros_environment.sh"
 
 if [[ "$skip_build" == false ]]; then
   required_commands=(colcon)

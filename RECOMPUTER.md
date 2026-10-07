@@ -17,8 +17,15 @@ An OS reflash is a separate decision and is not performed by these scripts.
 
 Gazebo Classic and its ROS integration have
 [reached end of life](https://index.ros.org/p/gazebo_ros/).
-This preparation preserves the working demo's simulator and plugins. Confirm
-that the target's configured apt repositories resolve them before the show.
+This preparation preserves the working demo's simulator and plugins.
+[Humble's Jammy ARM64 package status](https://repo.ros2.org/status_page/ros_humble_ujv8.html)
+has no binary packages for `gazebo_ros` or `gazebo_plugins`. On ARM64, setup
+builds the upstream `gazebo_ros_pkgs` release **3.9.0** when those packages are
+missing. Gazebo Classic itself also lacks Jammy ARM64 binaries in Ubuntu's main
+archive. If `gazebo`/`libgazebo-dev` have no apt candidate, setup adds the
+[Open Robotics non-amd64 PPA](https://launchpad.net/~openrobotics/+archive/ubuntu/gazebo11-non-amd64)
+linked by the [upstream installation guide](https://classic.gazebosim.org/tutorials?tut=install_ubuntu).
+Upstream explicitly provides no support or updates for these PPA binaries.
 
 Start with **4 vehicles**, Gazebo server only, and the web dashboard.
 Keep AMCL, validation/recovery, LiDAR, roaming, recording, and heatmaps active.
@@ -89,11 +96,20 @@ cd ~/warehouse_delivery_ws
 ```
 
 This installs colcon and rosdep using apt, initializes rosdep when needed,
-resolves build/runtime dependencies from `package.xml`, then builds only
-`warehouse_2d` with one worker and testing disabled. It uses the bundled web
+resolves build/runtime dependencies from `package.xml`, then builds
+`warehouse_2d` with one worker and testing disabled. On ARM64 it first builds
+missing Gazebo ROS packages in `.dependencies/gazebo_ros_ws`, with one compiler
+process at a time to limit memory use. The first build can take a while; leave
+that directory in place. Launch/check scripts load this underlay automatically.
+The setup uses the bundled web
 frontend, so Node.js/npm are not needed on the target. No tests or simulation
 are started by setup. `./setup_recomputer.sh --build-only` skips dependency
-installation for a machine already prepared.
+installation for a machine already prepared; it requires the Gazebo ROS source
+checkout to exist if the missing ARM64 packages still need to be built.
+
+If a launch reports `package 'gazebo_ros' not found`, building `warehouse_2d`
+alone does not install that runtime dependency. Run the full setup above.
+Installing modern `ros_gz` packages does not supply these Classic plugins.
 
 Afterwards:
 

@@ -16,7 +16,7 @@ if [[ "$ID" != ubuntu || "$VERSION_ID" != 22.04 ]]; then
   printf 'FAIL: native demo expects Ubuntu 22.04. See RECOMPUTER.md before installing.\n' >&2; exit 1
 fi
 if [[ ! -f /opt/ros/humble/setup.bash ]]; then printf 'FAIL: ROS 2 Humble is missing.\n' >&2; exit 1; fi
-source /opt/ros/humble/setup.bash
+source "$workspace_dir/ros_environment.sh"
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}"
 python3 - "$workspace_dir" <<'PY'
 import pathlib, platform, sys, json, xml.etree.ElementTree as ET

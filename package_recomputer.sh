@@ -20,7 +20,7 @@ tar -czf "$output" --exclude=node_modules --exclude=__pycache__ --exclude=.pytes
   --exclude='*.log' --exclude='.env*' --exclude='*.db' --exclude='*.db-shm' --exclude='*.db-wal' \
   --exclude='*.sqlite' --exclude='*.sqlite3' \
   -C "$workspace_dir" README.md RECOMPUTER.md requirements.txt \
-  run_demo.sh run_delivery.sh run_mapping.sh run_traffic.sh \
+  run_demo.sh run_delivery.sh run_mapping.sh run_traffic.sh ros_environment.sh \
   setup_recomputer.sh check_recomputer.sh run_recomputer.sh package_recomputer.sh verify_recomputer_demo.py \
   src/warehouse_2d
 (cd "$(dirname -- "$output")" && sha256sum "$(basename -- "$output")" > "$(basename -- "$output").sha256")
