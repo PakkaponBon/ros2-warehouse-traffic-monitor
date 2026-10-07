@@ -12,6 +12,9 @@ four forklifts, traffic history, and one operations web interface.
 
 ## Run the complete demo
 
+For the T208P / reComputer 8 GB transfer, native setup, a four-vehicle headless
+preset and rehearsal commands, see [RECOMPUTER.md](RECOMPUTER.md).
+
 After saving the robot's SLAM map, run:
 
 ```bash

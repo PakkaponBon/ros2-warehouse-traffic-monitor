@@ -134,6 +134,7 @@ def launch_fleet(context):
                               "map_yaml": str(map_path), "map_image": str(map_path.with_suffix(".png")),
                               "web_root": str((share / "web" / "dist" / "index.html").resolve().parent),
                               "web_port": int(value("web_port")),
+                              "web_host": value("web_host"),
                               "traffic_vehicle_count": count, "enable_side_tasks": False,
                               "enable_simulation_faults": False}],
                  condition=IfCondition(value("use_web")), output="screen")]),
@@ -172,5 +173,7 @@ def generate_launch_description():
         DeclareLaunchArgument("world_to_map_yaw", default_value="0.0"),
         DeclareLaunchArgument("database", default_value=str(Path.home() / ".ros" / "delivery_site_traffic.db")),
         DeclareLaunchArgument("web_port", default_value="8080"),
+        DeclareLaunchArgument("web_host", default_value="127.0.0.1",
+                              description="HTTP bind address; 0.0.0.0 to show the dashboard on a trusted LAN"),
         OpaqueFunction(function=launch_fleet),
     ])

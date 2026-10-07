@@ -5,11 +5,12 @@ workspace_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 web_dir="$workspace_dir/src/warehouse_2d/web"
 profile="warehouse_roads"
 skip_build=false
+skip_web_build=false
 launch_arguments=()
 
 usage() {
   cat <<'USAGE'
-Usage: ./run_demo.sh [--delivery] [--skip-build] [name:=value ...]
+Usage: ./run_demo.sh [--delivery] [--skip-build] [--skip-web-build] [name:=value ...]
 
 Build the frontend and ROS package, then start Gazebo, the fleet, AMCL,
 localization validation/recovery, recorder, heatmap, web monitor and RViz.
@@ -18,6 +19,7 @@ The default fleet uses eight vehicles roaming all reachable mapped areas.
   --delivery     Use the four-vehicle production delivery profile.
                  Requires a saved map covering the delivery stations.
   --skip-build   Use an existing build after checking required entry points.
+  --skip-web-build Use the bundled frontend; build only the ROS package.
   -h, --help     Show this help.
 
 Examples:
@@ -34,6 +36,7 @@ for argument in "$@"; do
   case "$argument" in
     --delivery) profile="warehouse_delivery" ;;
     --skip-build) skip_build=true ;;
+    --skip-web-build) skip_web_build=true ;;
     -h|--help) usage; exit 0 ;;
     profile:=*) profile="${argument#profile:=}" ;;
     *:=*) launch_arguments+=("$argument") ;;
@@ -82,19 +85,28 @@ fi
 source /opt/ros/humble/setup.bash
 
 if [[ "$skip_build" == false ]]; then
-  for required_command in npm colcon; do
+  required_commands=(colcon)
+  if [[ "$skip_web_build" == false ]]; then
+    required_commands+=(npm)
+  elif [[ ! -f "$web_dir/dist/index.html" ]]; then
+    printf 'Bundled frontend missing: run npm run build in %s first.\n' "$web_dir" >&2
+    exit 1
+  fi
+  for required_command in "${required_commands[@]}"; do
     if ! command -v "$required_command" >/dev/null 2>&1; then
       printf 'Required command missing: %s\n' "$required_command" >&2
       exit 1
     fi
   done
-  (
-    cd "$web_dir"
-    if [[ ! -x node_modules/.bin/vite ]]; then
-      npm ci
-    fi
-    npm run build
-  )
+  if [[ "$skip_web_build" == false ]]; then
+    (
+      cd "$web_dir"
+      if [[ ! -x node_modules/.bin/vite ]]; then
+        npm ci
+      fi
+      npm run build
+    )
+  fi
   (
     cd "$workspace_dir"
     colcon build --packages-select warehouse_2d --symlink-install
