@@ -75,7 +75,10 @@ def launch_fleet(context):
                  remappings=[("map", "/map")], parameters=[{
                      "use_sim_time": True, "base_frame_id": f"{name}/base_link", "global_frame_id": "map",
                      "odom_frame_id": f"{name}/odom", "scan_topic": "scan",
-                     "alpha1": 0.05, "alpha2": 0.05, "alpha3": 0.05, "alpha4": 0.05, "alpha5": 0.05,
+                     # planar_move publishes measured world motion as odometry.
+                     # Large wheel-slip noise makes particles wander in these
+                     # repetitive aisles and repeatedly trips the validator.
+                     "alpha1": 0.0001, "alpha2": 0.0001, "alpha3": 0.0001, "alpha4": 0.0001, "alpha5": 0.0001,
                      "min_particles": 400, "max_particles": 1200, "max_beams": 90,
                      "laser_model_type": "likelihood_field", "laser_min_range": 0.15, "laser_max_range": 20.0,
                      "laser_likelihood_max_dist": 2.0, "do_beamskip": True,

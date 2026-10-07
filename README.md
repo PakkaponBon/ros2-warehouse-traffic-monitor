@@ -58,6 +58,17 @@ already set). On this installation, tests with Fast DDS showed some Gazebo
 command subscriptions staying unresponsive even though commands were published;
 the Cyclone DDS fleet test confirmed physical movement from all eight vehicles.
 
+The driver ramps acceleration and angular commands, uses separate thresholds
+to start and finish an in-place turn, and keeps its obstacle escape direction
+stable across small LiDAR range changes. Localization and sensor interlocks
+still stop immediately. AMCL uses low motion noise for Gazebo's measured world
+odometry, and recovery seeds use a 5 cm / 0.02 rad standard deviation because
+the stopped pose comes from Gazebo truth. These simulation values need retuning
+for real wheel odometry and external positioning sensors.
+Gazebo validation retains the 0.40 m / 0.25 rad stop limits and requires
+three fresh confirmations within 75% of those limits before restarting.
+This margin prevents repeated stop/start commands near a validation boundary.
+
 ## Preview the enlarged warehouse
 
 ```bash

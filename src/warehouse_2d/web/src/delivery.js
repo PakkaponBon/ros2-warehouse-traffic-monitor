@@ -3,7 +3,7 @@ const escapeHtml = (value) => String(value ?? '—').replace(/[&<>"']/g, (char) 
 }[char]));
 
 const PHASES = {
-  roaming: ['Exploring the factory', -1],
+  roaming: ['Roaming', -1],
   idle: ['Waiting for a job', -1],
   to_pickup: ['Going to pickup', 0],
   loading: ['Loading cargo', 1],
@@ -62,7 +62,7 @@ function cargo(vehicle) {
 
 function progress(vehicle) {
   const { label, step } = deliveryPhase(vehicle.phase);
-  if (vehicle.phase === 'roaming') return `<div class="delivery-progress">${escapeHtml(label)} · Random goal</div>`;
+  if (vehicle.phase === 'roaming') return '';
   return `<div class="delivery-progress" aria-label="${escapeHtml(label)}">${['Pickup', 'Load', 'Deliver', 'Unload'].map((name, index) => `<span class="${index < step ? 'done' : index === step ? 'current' : ''}" ${index === step ? 'aria-current="step"' : ''}><i aria-hidden="true"></i>${name}</span>`).join('')}</div>`;
 }
 
@@ -89,7 +89,7 @@ export function renderDeliveryFleet(root, telemetry, snapshot, selectedVehicle) 
       <div class="vehicle-card-head"><strong><i class="status-dot ${issue ? 'blocked' : ''}"></i>${escapeHtml(vehicle.vehicle_id.replace('vehicle_', 'Forklift '))}</strong><b class="speed">${speed}</b></div>
       <div class="delivery-vehicle-route"><span>${escapeHtml(routeLabel(vehicle, snapshot))}</span></div>
       ${progress(vehicle)}
-      <div class="delivery-vehicle-foot"><small>${escapeHtml(phase.label)}</small>${cargo(vehicle)}</div>
+      <div class="delivery-vehicle-foot">${vehicle.phase === 'roaming' ? '' : `<small>${escapeHtml(phase.label)}</small>`}${cargo(vehicle)}</div>
       <small class="delivery-motion ${issue ? 'blocked' : ''}">${motion} · ${completedLabel(vehicle)}</small>
       ${observed ? `<div class="vehicle-position">Position <b>x ${observed.x.toFixed(2)} m</b><b>y ${observed.y.toFixed(2)} m</b></div>` : ''}
     </article>`;

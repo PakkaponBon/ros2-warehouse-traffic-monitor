@@ -36,15 +36,19 @@
 .dashboard .state-dot.blocked { background: #cb5b51; }
 .dashboard .state-dot.idle { background: #91a7b9; }
 .dashboard #issuesLegend { color: #a47734; font-size: 10px; }
-.dashboard .map-selection { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; background: #fafcfb; border-top: 1px solid var(--line); }
+.dashboard .map-selection { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); align-items: start; gap: 16px; padding: 14px 18px; background: #fafcfb; border-top: 1px solid var(--line); }
+.dashboard .map-selection > div { min-width: 0; }
+.dashboard .map-selection:not(.has-selection) > div:first-child { grid-column: 1 / -1; }
+.dashboard .map-selection:not(.has-selection) .map-selection-actions { display: none; }
 .dashboard .map-selection.has-selection { background: #f0f7f2; border-top-color: #dce9df; }
 .dashboard .selection-label { color: #7a8a7f; font-size: 9px; letter-spacing: 1px; font-weight: 600; }
 .dashboard .map-selection .map-focus { margin: 5px 0 0; color: #526c5d; font-size: 12px; overflow-wrap: anywhere; }
 .dashboard .map-selection .text-button { font-size: 11px; }
-.dashboard .map-selection-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dashboard .map-selection #clearMapSelection { grid-column: 3; }
+.dashboard .map-selection-actions { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 12px; }
 .dashboard .path-window-control { display: flex; align-items: center; gap: 7px; color: #526c5d; font-size: 11px; white-space: nowrap; }
 .dashboard .path-window-control select { min-height: 32px; padding: 4px 8px; font-size: 11px; }
-.dashboard .path-status { color: #687d6d; font-size: 10px; line-height: 1.5; max-width: 440px; }
+.dashboard .path-status { min-width: 0; min-height: 3em; color: #687d6d; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .dashboard .map-area-details { border-top: 1px solid #e0e9e2; }
 .dashboard .map-area-details > summary { color: #2c7657; cursor: pointer; padding: 12px 18px; font-size: 12px; }
 .dashboard .map-area-details .heat-area-summary { padding: 4px 18px 18px; }
@@ -54,6 +58,9 @@
 .dashboard .map-panel > .map-range { border-radius: 0 0 12px 12px; }
 .dashboard .map-tools { max-height: min(600px, 75vh); overflow-y: auto; }
 @media (max-width: 1200px) { .dashboard .map-view-hint { display: none; } }
+@media (max-width: 1400px) {
+  .dashboard .map-selection { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+}
 @media (max-width: 760px) {
   .dashboard .map-viewbar { padding: 10px 14px; }
   .dashboard .map-presets { width: 100%; }
@@ -64,8 +71,16 @@
   .dashboard .map-navigation-hint { left: 12px; bottom: 9px; padding: 0; border: 0; background: transparent; max-width: calc(100% - 24px); }
   .dashboard .map-legend-row { padding: 12px 14px; }
   .dashboard .map-legend-row .legend { gap: 8px 12px; }
-  .dashboard .map-selection { align-items: flex-start; flex-direction: column; gap: 4px; padding: 14px; }
+  .dashboard .map-selection { align-items: start; gap: 10px; padding: 14px; }
+  .dashboard .map-selection-actions { grid-template-columns: minmax(0, 1fr) auto; }
+  .dashboard .map-selection #clearMapSelection { grid-column: 2; }
+  .dashboard .path-status { grid-column: 1 / -1; grid-row: 2; }
   .dashboard .map-selection .text-button { padding-left: 0; }
+}
+@media (max-width: 400px) {
+  .dashboard .map-selection-actions { grid-template-columns: minmax(0, 1fr); }
+  .dashboard .map-selection #clearMapSelection { grid-column: 1; }
+  .dashboard .map-selection .text-button { justify-self: start; }
 }
 
 /* Traffic heat: visible controls, a data-driven scale, and direct area selection. */

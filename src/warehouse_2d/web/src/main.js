@@ -482,7 +482,11 @@ async function refreshSelectedTrack() {
   const end = new Date(endEpoch).toISOString();
   const start = new Date(endEpoch - Number($('#pathMinutes').value) * 60_000).toISOString();
   const requestId = ++state.trackRequest;
-  $('#pathStatus').textContent = 'Loading route…';
+  // Keep the current route details visible during background polling. Replacing
+  // them with a short loading label every two seconds makes the controls jump.
+  if (state.selectedTrack?.vehicle_id !== vehicleId) {
+    $('#pathStatus').textContent = 'Loading route…';
+  }
   try {
     const track = await getSelectedTrack(vehicleId, start, end);
     if (requestId !== state.trackRequest || state.selectedVehicle !== vehicleId || !$('#pathLayer').checked) return;

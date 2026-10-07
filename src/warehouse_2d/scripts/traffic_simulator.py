@@ -31,6 +31,50 @@ def readiness_allows_drive(entry, now, timeout):
     )
 
 
+def route_control(state, distance, heading_error, max_speed):
+    """Keep turning decisions stable across small localization corrections."""
+    turning = state.get("route_turning", False)
+    if abs(heading_error) > 0.60:
+        turning = True
+    elif abs(heading_error) < 0.20:
+        turning = False
+    state["route_turning"] = turning
+    turn = max(-1.5, min(1.5, 2.0 * heading_error))
+    if abs(heading_error) < 0.025:
+        turn = 0.0
+    speed = (0.0 if turning else min(max_speed, 0.8 * distance)
+             * max(0.0, math.cos(heading_error)))
+    return speed, turn, not turning
+
+
+def limit_command(state, speed, turn, elapsed, safety_limit=False):
+    """Ramp normal commands, but never delay an interlock or obstacle stop."""
+    previous_speed, previous_turn = state.get("command", (0.0, 0.0))
+    elapsed = min(max(elapsed, 0.0), 0.2)
+    if safety_limit:
+        speed = min(speed, previous_speed + 0.4 * elapsed)
+    else:
+        speed = max(previous_speed - 0.8 * elapsed,
+                    min(previous_speed + 0.4 * elapsed, speed))
+    turn = max(previous_turn - 2.0 * elapsed,
+               min(previous_turn + 2.0 * elapsed, turn))
+    state["command"] = (speed, turn)
+    return speed, turn
+
+
+def avoidance_turn_side(state, left, right, active):
+    """Choose an escape side once; ignore small range noise until clear."""
+    if not active:
+        state.pop("avoidance_turn_side", None)
+        return 1.0 if left >= right else -1.0
+    side = state.get("avoidance_turn_side")
+    if (side is None or (side > 0 and right > left + 0.4)
+            or (side < 0 and left > right + 0.4)):
+        side = 1.0 if left >= right else -1.0
+    state["avoidance_turn_side"] = side
+    return side
+
+
 def resolve_random_vehicle(configured, names):
     """Resolve one random-roaming vehicle from a launch-friendly value."""
     allowed = tuple(names)
@@ -624,6 +668,14 @@ class TrafficSimulator(Node):
 
     def _publish_control(self, name, speed=0.0, turn=0.0, motion_state="idle"):
         """Publish both actuator intent and its operational context."""
+        # All early-return interlocks publish zero directly and clear the ramp.
+        self.states[name]["command"] = (speed, turn)
+        if speed == 0.0 and turn == 0.0 and motion_state in {
+            "idle", "localizing", "sensor_wait", "planning", "task_planning",
+            "side_work", "loading", "unloading", "stalled",
+        }:
+            self.states[name]["route_turning"] = False
+            self.states[name].pop("avoidance_turn_side", None)
         command = Twist()
         command.linear.x = float(speed)
         command.angular.z = float(turn)
@@ -694,13 +746,10 @@ class TrafficSimulator(Node):
                 distance = math.hypot(dx, dy)
             # Ease into a waypoint instead of hitting it at full speed and
             # oscillating around it.
-            speed = min(self.max_speed, 0.8 * distance)
             target_yaw = math.atan2(dy, dx)
             heading_error = (target_yaw - state["yaw"] + math.pi) % (2 * math.pi) - math.pi
-            turn = max(-1.5, min(1.5, 2.0 * heading_error))
-            aligned_for_drive = abs(heading_error) <= 0.35
-            if not aligned_for_drive:
-                speed = 0.0
+            speed, turn, aligned_for_drive = route_control(
+                state, distance, heading_error, self.max_speed)
 
             # Find vehicles inside a narrow corridor in front of this bot.
             # Following traffic slows smoothly. For head-on/crossing traffic,
@@ -772,7 +821,8 @@ class TrafficSimulator(Node):
             lidar_blocked = False
             if self.map_navigation:
                 _scan_time, front, left, right = self.scans[name]
-                turn_side = 1.0 if left >= right else -1.0
+                turn_side = avoidance_turn_side(
+                    state, left, right, front < self.avoidance_distance)
                 # A forward return does not obstruct an in-place turn. Wait
                 # until the robot faces its path before treating that return
                 # as something it could drive into.
@@ -819,6 +869,10 @@ class TrafficSimulator(Node):
                         speed = 0.0
                 else:
                     state["blocked_since"] = None
+            speed, turn = limit_command(
+                state, speed, turn, elapsed,
+                safety_limit=(speed == 0.0 or emergency is not None
+                              or obstacle is not None or lidar_blocked))
             state["yaw"] += turn * elapsed
             state["x"] += math.cos(state["yaw"]) * speed * elapsed
             state["y"] += math.sin(state["yaw"]) * speed * elapsed

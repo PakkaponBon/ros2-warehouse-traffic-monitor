@@ -6,6 +6,9 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
 from traffic_simulator import (  # noqa: E402
     TrafficSimulator,
+    avoidance_turn_side,
+    limit_command,
+    route_control,
     parse_side_task_request,
     readiness_allows_drive,
     resolve_random_vehicle,
@@ -18,6 +21,62 @@ from simulation_faults import (  # noqa: E402
     validate_fault_request,
     vehicle_names,
 )
+
+
+def test_heading_noise_does_not_toggle_forward_motion():
+    state = {}
+    for angle in (.34, .36, .33, .37, .34):
+        speed, _turn, aligned = route_control(state, 3, angle, .5)
+        assert aligned and speed > .4
+    assert route_control(state, 3, .8, .5)[0] == 0
+    assert route_control(state, 3, .3, .5)[0] == 0
+    assert route_control(state, 3, .19, .5)[0] > .4
+
+
+def test_command_ramp_limits_acceleration_and_steering_reversal():
+    state = {}
+    speed, turn = limit_command(state, .5, 1.5, .1)
+    assert 0 < speed <= .0400001
+    assert 0 < turn <= .2000001
+    _speed, turn = limit_command(state, .5, -1.5, .1)
+    assert abs(turn) < .000001
+    state['command'] = (.5, 1.5)
+    speed, _turn = limit_command(state, .1, 1.5, .1)
+    assert .4 < speed < .5
+
+
+def test_safety_braking_is_immediate_even_after_full_speed():
+    for requested in (0, .08):
+        state = {'command': (.5, .8)}
+        speed, _turn = limit_command(state, requested, 0, .1, safety_limit=True)
+        assert speed == requested
+
+
+def test_localization_stop_clears_command_before_resuming():
+    from types import SimpleNamespace
+    node = TrafficSimulator.__new__(TrafficSimulator)
+    commands = []
+    node.states = {'a': {'command': (.5, 1.5), 'route_turning': True}}
+    node.command_publishers = {'a': SimpleNamespace(publish=commands.append)}
+    node.state_publishers = {'a': SimpleNamespace(publish=lambda msg: None)}
+    node._publish_control('a', motion_state='localizing')
+    assert commands[-1].linear.x == commands[-1].angular.z == 0
+    speed, turn = limit_command(node.states['a'], .5, 1.5, .1)
+    assert speed <= .0400001 and turn <= .2000001
+    # Passing through zero during a steering reversal must retain the side
+    # choice, otherwise a noisy scan can undo avoidance on the next tick.
+    node.states['a']['avoidance_turn_side'] = 1
+    node._publish_control('a', motion_state='blocked_obstacle')
+    assert node.states['a']['avoidance_turn_side'] == 1
+
+
+def test_avoidance_ignores_range_noise_and_releases_side_when_clear():
+    state = {}
+    for left, right in ((1.01, 1), (.99, 1), (1, 1.01)):
+        assert avoidance_turn_side(state, left, right, True) == 1
+    assert avoidance_turn_side(state, .4, 1.2, True) == -1
+    avoidance_turn_side(state, 2, 2, False)
+    assert avoidance_turn_side(state, 2.1, 2, True) == 1
 
 
 

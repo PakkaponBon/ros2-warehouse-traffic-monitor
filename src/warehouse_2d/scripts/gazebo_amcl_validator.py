@@ -32,6 +32,17 @@ def angle_distance(first, second):
     return abs((first - second + math.pi) % (2.0 * math.pi) - math.pi)
 
 
+def pose_within_drive_tolerance(vehicle, settings):
+    """Require a margin before restarting after a validation stop.
+
+    The stop thresholds remain unchanged. Restarting at the very same
+    boundary repeatedly toggles cmd_vel when the estimate has small noise.
+    """
+    margin = 1.0 if vehicle.state == "ready" else 0.75
+    return (vehicle.position_error <= margin * settings["position_tolerance"]
+            and vehicle.yaw_error <= margin * settings["yaw_tolerance"])
+
+
 @dataclass
 class VehicleValidation:
     truth: tuple = None
@@ -271,8 +282,11 @@ class GazeboAmclValidator(Node):
         message.pose.pose.position.y = float(y)
         message.pose.pose.orientation.z = math.sin(yaw / 2.0)
         message.pose.pose.orientation.w = math.cos(yaw / 2.0)
-        message.pose.covariance[0] = message.pose.covariance[7] = 0.04
-        message.pose.covariance[35] = 0.01
+        # This seed is measured Gazebo truth after motion has stopped. A broad
+        # 20 cm / 0.1 rad distribution lets repetitive shelves pull AMCL into
+        # a neighbouring hypothesis immediately after every recovery.
+        message.pose.covariance[0] = message.pose.covariance[7] = 0.0025
+        message.pose.covariance[35] = 0.0004
         publisher.publish(message)
         vehicle.reset_received = now
         vehicle.reset_stamp = Time.from_msg(message.header.stamp).nanoseconds
@@ -331,8 +345,7 @@ class GazeboAmclValidator(Node):
                         vehicle.measurement_skew = skew
                 if vehicle.position_error is not None and stamp != vehicle.checked_stamp:
                     vehicle.checked_stamp = stamp
-                    good = (vehicle.position_error <= self.settings["position_tolerance"]
-                            and vehicle.yaw_error <= self.settings["yaw_tolerance"])
+                    good = pose_within_drive_tolerance(vehicle, self.settings)
                     bad = (vehicle.position_error > self.settings["recovery_position_error"]
                            or vehicle.yaw_error > self.settings["recovery_yaw_error"])
                     # A pre-reset AMCL message/TF must never release the interlock.
@@ -379,8 +392,7 @@ class GazeboAmclValidator(Node):
                         vehicle.reason = "waiting_for_amcl_after_reset"
                     elif vehicle.position_error is None:
                         vehicle.reason = "waiting_for_amcl_transform_after_reset"
-                    elif (vehicle.position_error > self.settings["position_tolerance"]
-                          or vehicle.yaw_error > self.settings["yaw_tolerance"]):
+                    elif not pose_within_drive_tolerance(vehicle, self.settings):
                         vehicle.reason = "amcl_pose_mismatch_after_reset"
                     else:
                         vehicle.reason = "confirming_amcl_pose_after_reset"
